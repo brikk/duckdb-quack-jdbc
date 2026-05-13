@@ -45,7 +45,14 @@ public abstract class SkeletalConnection implements Connection {
     @Override public PreparedStatement prepareStatement(String sql, int[] columnIndexes) throws SQLException { return prepareStatement(sql); }
     @Override public PreparedStatement prepareStatement(String sql, String[] columnNames) throws SQLException { return prepareStatement(sql); }
     @Override public Map<String, Class<?>> getTypeMap() { return Map.of(); }
-    @Override public void setTypeMap(Map<String, Class<?>> map) throws SQLException { throw notSupported("setTypeMap"); }
+    @Override public void setTypeMap(Map<String, Class<?>> map) throws SQLException {
+        // Connection pools (HikariCP) call setTypeMap(new HashMap<>()) during
+        // eviction. Accept empty/null maps silently; only non-empty mappings
+        // are genuinely unsupported.
+        if (map != null && !map.isEmpty()) {
+            throw notSupported("setTypeMap with a non-empty type map");
+        }
+    }
     @Override public void setHoldability(int holdability) { /* no-op */ }
     @Override public int getHoldability() { return java.sql.ResultSet.CLOSE_CURSORS_AT_COMMIT; }
     @Override public Savepoint setSavepoint() throws SQLException { throw notSupported("Savepoints"); }
@@ -56,13 +63,28 @@ public abstract class SkeletalConnection implements Connection {
     @Override public Blob createBlob() throws SQLException { throw notSupported("Blob"); }
     @Override public NClob createNClob() throws SQLException { throw notSupported("NClob"); }
     @Override public SQLXML createSQLXML() throws SQLException { throw notSupported("SQLXML"); }
-    @Override public boolean isValid(int timeout) { return !isClosedQuietly(); }
+    @Override public boolean isValid(int timeout) {
+        if (isClosedQuietly()) return false;
+        try (Statement s = createStatement();
+             java.sql.ResultSet rs = s.executeQuery("SELECT 1")) {
+            return rs.next() && rs.getInt(1) == 1;
+        } catch (SQLException e) {
+            return false;
+        }
+    }
     @Override public void setClientInfo(String name, String value) throws SQLClientInfoException { /* no-op */ }
     @Override public void setClientInfo(Properties properties) throws SQLClientInfoException { /* no-op */ }
     @Override public String getClientInfo(String name) { return null; }
     @Override public Properties getClientInfo() { return new Properties(); }
-    @Override public Array createArrayOf(String typeName, Object[] elements) throws SQLException { throw notSupported("createArrayOf"); }
-    @Override public Struct createStruct(String typeName, Object[] attributes) throws SQLException { throw notSupported("createStruct"); }
+    @Override public Array createArrayOf(String typeName, Object[] elements) {
+        java.util.List<Object> values = elements == null
+                ? java.util.List.of()
+                : new java.util.ArrayList<>(java.util.Arrays.asList(elements));
+        return new QuackArray(values, null);
+    }
+    @Override public Struct createStruct(String typeName, Object[] attributes) {
+        return new QuackStruct(typeName, attributes);
+    }
     @Override public void abort(Executor executor) throws SQLException { close(); }
     @Override public void setNetworkTimeout(Executor executor, int milliseconds) { /* no-op */ }
     @Override public int getNetworkTimeout() { return 0; }

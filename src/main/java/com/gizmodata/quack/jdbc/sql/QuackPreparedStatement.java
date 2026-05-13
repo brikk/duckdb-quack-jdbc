@@ -34,12 +34,17 @@ import java.util.UUID;
 
 public class QuackPreparedStatement extends QuackStatement implements PreparedStatement {
 
+    private final QuackConnection connection;
     private final String sql;
+    private final int markerCount;
     private final List<Object> parameters = new ArrayList<>();
+    private final List<List<Object>> paramBatch = new ArrayList<>();
 
     public QuackPreparedStatement(QuackConnection connection, String sql) {
         super(connection);
+        this.connection = connection;
         this.sql = sql;
+        this.markerCount = countMarkers(sql);
     }
 
     private void setParam(int index, Object value) throws SQLException {
@@ -50,7 +55,7 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
         parameters.set(index - 1, value);
     }
 
-    private String interpolate() throws SQLException {
+    private String interpolate(List<Object> params) throws SQLException {
         StringBuilder out = new StringBuilder(sql.length() + 32);
         int paramIndex = 0;
         boolean inSingle = false;
@@ -64,18 +69,37 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
                 inDouble = !inDouble;
                 out.append(c);
             } else if (c == '?' && !inSingle && !inDouble) {
-                if (paramIndex >= parameters.size()) {
+                if (paramIndex >= params.size()) {
                     throw new SQLException("Not enough parameters bound for SQL: " + sql);
                 }
-                out.append(SqlLiteral.render(parameters.get(paramIndex++)));
+                out.append(SqlLiteral.render(params.get(paramIndex++)));
             } else {
                 out.append(c);
             }
         }
-        if (paramIndex != parameters.size()) {
-            throw new SQLException("Bound " + parameters.size() + " parameters but SQL has " + paramIndex);
-        }
         return out.toString();
+    }
+
+    private String interpolate() throws SQLException {
+        return interpolate(parameters);
+    }
+
+    private String interpolateWithDefaults() throws SQLException {
+        List<Object> padded = new ArrayList<>(parameters);
+        while (padded.size() < markerCount) padded.add(null);
+        return interpolate(padded);
+    }
+
+    static int countMarkers(String sql) {
+        int count = 0;
+        boolean inSingle = false, inDouble = false;
+        for (int i = 0; i < sql.length(); i++) {
+            char c = sql.charAt(i);
+            if (c == '\'' && !inDouble) inSingle = !inSingle;
+            else if (c == '"' && !inSingle) inDouble = !inDouble;
+            else if (c == '?' && !inSingle && !inDouble) count++;
+        }
+        return count;
     }
 
     @Override
@@ -94,15 +118,62 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
     }
 
     @Override
-    public void addBatch() throws SQLException { throw notSupported("batch"); }
+    public void addBatch() throws SQLException {
+        // Snapshot the current parameter binding for later replay.
+        paramBatch.add(new ArrayList<>(parameters));
+    }
+
+    @Override
+    public void addBatch(String sql) throws SQLException {
+        // JDBC contract: PreparedStatement disallows the SQL-taking variant.
+        throw new SQLException("PreparedStatement.addBatch(String) is not allowed");
+    }
+
+    @Override
+    public void clearBatch() {
+        paramBatch.clear();
+    }
+
+    @Override
+    public int[] executeBatch() throws SQLException {
+        int[] counts = new int[paramBatch.size()];
+        for (int i = 0; i < paramBatch.size(); i++) {
+            try {
+                counts[i] = executeUpdate(interpolate(paramBatch.get(i)));
+            } catch (SQLException e) {
+                counts[i] = java.sql.Statement.EXECUTE_FAILED;
+                paramBatch.clear();
+                throw new java.sql.BatchUpdateException(e.getMessage(), counts, e);
+            }
+        }
+        paramBatch.clear();
+        return counts;
+    }
 
     @Override
     public void clearParameters() {
         parameters.clear();
     }
 
-    @Override public ResultSetMetaData getMetaData() throws SQLException { throw notSupported("PreparedStatement.getMetaData"); }
-    @Override public ParameterMetaData getParameterMetaData() throws SQLException { throw notSupported("ParameterMetaData"); }
+    @Override
+    public ResultSetMetaData getMetaData() throws SQLException {
+        // Run "SELECT * FROM (<sql>) LIMIT 0" so we get the schema without
+        // materializing any rows. For non-SELECT prepared statements
+        // (INSERT/UPDATE/DDL/etc.) the wrap will fail server-side and we
+        // return null per JDBC contract.
+        try {
+            String wrapped = "SELECT * FROM (" + interpolateWithDefaults() + ") LIMIT 0";
+            QuackSession.PreparedResult result = connection.session().prepare(wrapped);
+            return new QuackResultSetMetaData(result.columnNames(), result.columnTypes());
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    @Override
+    public ParameterMetaData getParameterMetaData() {
+        return new QuackParameterMetaData(markerCount);
+    }
 
     @Override public void setNull(int i, int sqlType) throws SQLException { setParam(i, null); }
     @Override public void setNull(int i, int sqlType, String typeName) throws SQLException { setParam(i, null); }

@@ -6,16 +6,56 @@ import com.gizmodata.quack.jdbc.type.LogicalTypeId;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
 
 public class QuackStatement extends SkeletalStatement {
 
     private final QuackConnection connection;
+    private final List<String> batch = new ArrayList<>();
     private QuackResultSet currentResultSet;
     private int updateCount = -1;
     private boolean closed;
 
     public QuackStatement(QuackConnection connection) {
         this.connection = connection;
+    }
+
+    @Override
+    public void addBatch(String sql) throws SQLException {
+        checkOpen();
+        batch.add(sql);
+    }
+
+    @Override
+    public void clearBatch() throws SQLException {
+        checkOpen();
+        batch.clear();
+    }
+
+    @Override
+    public int[] executeBatch() throws SQLException {
+        checkOpen();
+        int[] counts = new int[batch.size()];
+        for (int i = 0; i < batch.size(); i++) {
+            try {
+                counts[i] = executeUpdate(batch.get(i));
+            } catch (SQLException e) {
+                counts[i] = java.sql.Statement.EXECUTE_FAILED;
+                batch.clear();
+                throw new java.sql.BatchUpdateException(e.getMessage(), counts, e);
+            }
+        }
+        batch.clear();
+        return counts;
+    }
+
+    @Override
+    public void cancel() {
+        // Quack protocol has no in-flight cancel today. Treat as best-effort
+        // no-op so tools like DBeaver / DataGrip query-timeout buttons don't
+        // see an exception. A real cancel will follow when the protocol
+        // adds support.
     }
 
     @Override

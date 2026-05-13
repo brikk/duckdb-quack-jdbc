@@ -2,7 +2,9 @@ package com.gizmodata.quack.jdbc.sql;
 
 import com.gizmodata.quack.jdbc.message.DataChunk;
 import com.gizmodata.quack.jdbc.message.DecodedVector;
+import com.gizmodata.quack.jdbc.type.ExtraTypeInfo;
 import com.gizmodata.quack.jdbc.type.LogicalType;
+import com.gizmodata.quack.jdbc.type.PhysicalTypeUtil;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
@@ -11,6 +13,8 @@ import java.io.StringReader;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.sql.Array;
+import java.sql.Blob;
 import java.sql.Date;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
@@ -238,6 +242,34 @@ public final class QuackResultSet extends SkeletalResultSet {
 
     @Override public Object getObject(int columnIndex) throws SQLException { return rawValue(columnIndex); }
     @Override public Object getObject(String columnLabel) throws SQLException { return rawValue(columnLabel); }
+
+    @Override public Array getArray(int columnIndex) throws SQLException {
+        Object v = rawValue(columnIndex);
+        if (v == null) return null;
+        if (!(v instanceof java.util.List<?> list)) {
+            throw new SQLException("Column " + columnIndex + " is not an array-typed value");
+        }
+        LogicalType type = columnTypes.get(columnIndex - 1);
+        LogicalType elementType = extractElementType(type);
+        return new QuackArray(list, elementType);
+    }
+    @Override public Array getArray(String columnLabel) throws SQLException { return getArray(findColumn(columnLabel)); }
+
+    @Override public Blob getBlob(int columnIndex) throws SQLException {
+        Object v = rawValue(columnIndex);
+        if (v == null) return null;
+        if (v instanceof byte[] bytes) return new QuackBlob(bytes);
+        return new QuackBlob(v.toString().getBytes(StandardCharsets.UTF_8));
+    }
+    @Override public Blob getBlob(String columnLabel) throws SQLException { return getBlob(findColumn(columnLabel)); }
+
+    private static LogicalType extractElementType(LogicalType type) {
+        if (type == null || type.typeInfo().isEmpty()) return null;
+        ExtraTypeInfo info = type.typeInfo().get();
+        if (info instanceof ExtraTypeInfo.ListInfo l) return l.childType();
+        if (info instanceof ExtraTypeInfo.ArrayInfo a) return a.childType();
+        return null;
+    }
 
     @Override
     @SuppressWarnings("unchecked")

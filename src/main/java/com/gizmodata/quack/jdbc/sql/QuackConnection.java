@@ -104,7 +104,13 @@ public final class QuackConnection extends SkeletalConnection {
     }
 
     @Override
-    public void setCatalog(String catalog) {
+    public void setCatalog(String catalog) throws SQLException {
+        if (catalog != null && !catalog.isEmpty() && !catalog.equals(this.catalog)) {
+            try (Statement s = createStatement()) {
+                s.execute("USE " + quoteIdent(catalog)
+                        + (schema != null && !schema.isEmpty() ? "." + quoteIdent(schema) : ""));
+            }
+        }
         this.catalog = catalog;
     }
 
@@ -114,8 +120,20 @@ public final class QuackConnection extends SkeletalConnection {
     }
 
     @Override
-    public void setSchema(String schema) {
+    public void setSchema(String schema) throws SQLException {
+        if (schema != null && !schema.isEmpty() && !schema.equals(this.schema)) {
+            try (Statement s = createStatement()) {
+                String catPrefix = catalog != null && !catalog.isEmpty()
+                        ? quoteIdent(catalog) + "."
+                        : "";
+                s.execute("USE " + catPrefix + quoteIdent(schema));
+            }
+        }
         this.schema = schema;
+    }
+
+    private static String quoteIdent(String ident) {
+        return "\"" + ident.replace("\"", "\"\"") + "\"";
     }
 
     private void checkOpen() throws SQLException {
