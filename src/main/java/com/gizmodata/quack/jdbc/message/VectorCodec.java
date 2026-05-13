@@ -28,29 +28,20 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Decode and (eventually) encode DuckDB DataChunks from the Quack wire
- * format. Decoded values use natural Java types:
+ * Decode (and stub-encode) DuckDB DataChunks from the Quack wire format.
  *
- * <ul>
- *   <li>BOOLEAN -&gt; {@link Boolean}</li>
- *   <li>TINYINT/SMALLINT/INTEGER -&gt; {@link Integer} / {@link Short} /
- *       {@link Byte}</li>
- *   <li>BIGINT -&gt; {@link Long}; UBIGINT also {@link Long} (bits raw)</li>
- *   <li>HUGEINT/UHUGEINT -&gt; {@link BigInteger}</li>
- *   <li>FLOAT/DOUBLE -&gt; {@link Float} / {@link Double}</li>
- *   <li>DECIMAL -&gt; {@link BigDecimal}</li>
- *   <li>DATE -&gt; {@link LocalDate}</li>
- *   <li>TIME / TIME_NS -&gt; {@link LocalTime}</li>
- *   <li>TIMESTAMP variants -&gt; {@link LocalDateTime}; TIMESTAMP_TZ -&gt;
- *       {@link OffsetDateTime}</li>
- *   <li>INTERVAL -&gt; {@link IntervalValue}</li>
- *   <li>VARCHAR/CHAR -&gt; {@link String}; BLOB/BIT/GEOMETRY -&gt; {@code byte[]}</li>
- *   <li>UUID -&gt; {@link UUID}</li>
- *   <li>ENUM -&gt; {@link String} (the enum value)</li>
- *   <li>STRUCT -&gt; {@code Map<String,Object>}; LIST/MAP -&gt; {@code List<Object>};
- *       ARRAY -&gt; {@code List<Object>}</li>
- *   <li>NULL -&gt; {@code null}</li>
- * </ul>
+ * <p>FLAT vectors of fixed-width primitive logical types decode directly
+ * into typed {@link DecodedVector} primitive-array records
+ * ({@link DecodedVector.IntVec}, {@link DecodedVector.LongVec}, etc.) to
+ * avoid the per-row boxing cost of a generic {@code Object[]}. Logical
+ * types whose materialized Java form is not a primitive
+ * (DATE → {@code LocalDate}, TIMESTAMP → {@code LocalDateTime},
+ * DECIMAL → {@code BigDecimal}, VARCHAR/BLOB, nested types, etc.) fall
+ * through to {@link DecodedVector.ObjectVec}.
+ *
+ * <p>CONSTANT, DICTIONARY, and SEQUENCE vector encodings currently
+ * materialize into {@code ObjectVec}; they're uncommon enough in real
+ * workloads that the additional code path didn't pay for itself yet.
  */
 public final class VectorCodec {
 
@@ -92,50 +83,54 @@ public final class VectorCodec {
         int vectorTypeId = reader.readOptionalField(90, reader::readUlebInt, VectorType.FLAT.wireId());
         VectorType vectorType = VectorType.fromWireId(vectorTypeId);
         return switch (vectorType) {
-            case FLAT -> decodeFlatVectorBody(reader, type, count, vectorType);
+            case FLAT -> decodeFlatVector(reader, type, count);
             case FSST -> throw new QuackUnsupportedTypeException(
                     "FSST-compressed vectors are not yet supported");
-            case CONSTANT -> {
-                DecodedVector decoded = decodeVectorBody(reader, type, count > 0 ? 1 : 0);
-                Object value = decoded.values().isEmpty() ? null : decoded.values().get(0);
-                List<Object> values = new ArrayList<>(count);
-                for (int i = 0; i < count; i++) values.add(value);
-                yield new DecodedVector(type, vectorType, values);
-            }
-            case DICTIONARY -> {
-                int[] selection = reader.readRequiredField(91, () -> readSelectionVector(reader, count));
-                int dictionaryCount = reader.readRequiredField(92, reader::readUlebInt);
-                DecodedVector dictionary = decodeVectorBody(reader, type, dictionaryCount);
-                List<Object> values = new ArrayList<>(count);
-                for (int idx : selection) {
-                    if (idx < 0 || idx >= dictionary.values().size()) {
-                        throw new QuackProtocolException("Dictionary selection " + idx + " is out of range");
-                    }
-                    values.add(dictionary.values().get(idx));
-                }
-                yield new DecodedVector(type, vectorType, values);
-            }
-            case SEQUENCE -> {
-                long start = reader.readRequiredField(91, reader::readSlebLong);
-                long increment = reader.readRequiredField(92, reader::readSlebLong);
-                List<Object> values = new ArrayList<>(count);
-                for (int i = 0; i < count; i++) {
-                    long v = start + increment * (long) i;
-                    values.add(decodeSequenceValue(type, v));
-                }
-                yield new DecodedVector(type, vectorType, values);
-            }
+            case CONSTANT -> broadcastConstant(reader, type, count);
+            case DICTIONARY -> decodeDictionary(reader, type, count);
+            case SEQUENCE -> decodeSequence(reader, type, count);
         };
     }
 
-    private static DecodedVector decodeFlatVectorBody(BinaryReader reader, LogicalType type, int count,
-                                                      VectorType vectorType) {
+    private static DecodedVector broadcastConstant(BinaryReader reader, LogicalType type, int count) {
+        DecodedVector single = decodeVectorBody(reader, type, count > 0 ? 1 : 0);
+        Object value = single.size() == 0 ? null : single.getObject(0);
+        Object[] values = new Object[count];
+        for (int i = 0; i < count; i++) values[i] = value;
+        return new DecodedVector.ObjectVec(type, values);
+    }
+
+    private static DecodedVector decodeDictionary(BinaryReader reader, LogicalType type, int count) {
+        int[] selection = reader.readRequiredField(91, () -> readSelectionVector(reader, count));
+        int dictionaryCount = reader.readRequiredField(92, reader::readUlebInt);
+        DecodedVector dictionary = decodeVectorBody(reader, type, dictionaryCount);
+        Object[] values = new Object[count];
+        for (int i = 0; i < count; i++) {
+            int idx = selection[i];
+            if (idx < 0 || idx >= dictionary.size()) {
+                throw new QuackProtocolException("Dictionary selection " + idx + " is out of range");
+            }
+            values[i] = dictionary.getObject(idx);
+        }
+        return new DecodedVector.ObjectVec(type, values);
+    }
+
+    private static DecodedVector decodeSequence(BinaryReader reader, LogicalType type, int count) {
+        long start = reader.readRequiredField(91, reader::readSlebLong);
+        long increment = reader.readRequiredField(92, reader::readSlebLong);
+        Object[] values = new Object[count];
+        for (int i = 0; i < count; i++) {
+            values[i] = decodeSequenceValue(type, start + increment * (long) i);
+        }
+        return new DecodedVector.ObjectVec(type, values);
+    }
+
+    private static DecodedVector decodeFlatVector(BinaryReader reader, LogicalType type, int count) {
         if (type.id() == LogicalTypeId.GEOMETRY && !reader.eof() && reader.peekFieldId() == 99) {
             reader.readRequiredField(99, reader::readUlebInt);
         }
-
-        boolean hasValidityMask = reader.readRequiredField(100, reader::readBool);
-        boolean[] validity = hasValidityMask
+        boolean hasValidity = reader.readRequiredField(100, reader::readBool);
+        boolean[] validity = hasValidity
                 ? reader.readRequiredField(101, () -> readValidityMask(reader, count))
                 : null;
         PhysicalType physicalType = PhysicalTypeUtil.getPhysicalType(type);
@@ -147,19 +142,18 @@ public final class VectorCodec {
                 throw new QuackProtocolException(
                         "Fixed-size vector data has " + bytes.length + " bytes, expected " + byteLength);
             }
-            List<Object> values = decodeFixedValues(type, physicalType, bytes, count, validity);
-            return new DecodedVector(type, vectorType, values);
+            return decodeFixedFlatVector(type, physicalType, bytes, count, validity);
         }
 
         return switch (physicalType) {
             case VARCHAR -> {
                 List<byte[]> raw = reader.readRequiredField(102,
                         () -> reader.readList(i -> reader.readStringBytes()));
-                List<Object> values = new ArrayList<>(raw.size());
+                Object[] values = new Object[raw.size()];
                 for (int i = 0; i < raw.size(); i++) {
-                    values.add(isValid(validity, i) ? decodeStringLikeValue(type, raw.get(i)) : null);
+                    values[i] = isValid(validity, i) ? decodeStringLikeValue(type, raw.get(i)) : null;
                 }
-                yield new DecodedVector(type, vectorType, values);
+                yield new DecodedVector.ObjectVec(type, values);
             }
             case STRUCT -> {
                 List<ChildType> children = PhysicalTypeUtil.getStructChildren(type);
@@ -171,19 +165,19 @@ public final class VectorCodec {
                             }
                             return decodeVector(reader, children.get(i).type(), count);
                         }));
-                List<Object> values = new ArrayList<>(count);
+                Object[] values = new Object[count];
                 for (int row = 0; row < count; row++) {
                     if (!isValid(validity, row)) {
-                        values.add(null);
+                        values[row] = null;
                         continue;
                     }
                     Map<String, Object> rowMap = new LinkedHashMap<>();
                     for (int c = 0; c < children.size(); c++) {
-                        rowMap.put(children.get(c).name(), childVectors.get(c).values().get(row));
+                        rowMap.put(children.get(c).name(), childVectors.get(c).getObject(row));
                     }
-                    values.add(rowMap);
+                    values[row] = rowMap;
                 }
-                yield new DecodedVector(type, vectorType, values);
+                yield new DecodedVector.ObjectVec(type, values);
             }
             case LIST -> {
                 int listSize = reader.readRequiredField(104, reader::readUlebInt);
@@ -192,16 +186,20 @@ public final class VectorCodec {
                 LogicalType childType = PhysicalTypeUtil.getChildType(type);
                 DecodedVector childVector = reader.readRequiredField(106,
                         () -> decodeVector(reader, childType, listSize));
-                List<Object> values = new ArrayList<>(count);
+                Object[] values = new Object[count];
                 for (int row = 0; row < count; row++) {
                     if (!isValid(validity, row)) {
-                        values.add(null);
+                        values[row] = null;
                         continue;
                     }
                     ListEntry e = entries.get(row);
-                    values.add(new ArrayList<>(childVector.values().subList(e.offset, e.offset + e.length)));
+                    List<Object> slice = new ArrayList<>(e.length);
+                    for (int k = 0; k < e.length; k++) {
+                        slice.add(childVector.getObject(e.offset + k));
+                    }
+                    values[row] = slice;
                 }
-                yield new DecodedVector(type, vectorType, values);
+                yield new DecodedVector.ObjectVec(type, values);
             }
             case ARRAY -> {
                 int arraySize = reader.readRequiredField(103, reader::readUlebInt);
@@ -213,32 +211,116 @@ public final class VectorCodec {
                 LogicalType childType = PhysicalTypeUtil.getChildType(type);
                 DecodedVector childVector = reader.readRequiredField(104,
                         () -> decodeVector(reader, childType, arraySize * count));
-                List<Object> values = new ArrayList<>(count);
+                Object[] values = new Object[count];
                 for (int row = 0; row < count; row++) {
                     if (!isValid(validity, row)) {
-                        values.add(null);
+                        values[row] = null;
                         continue;
                     }
                     int offset = row * arraySize;
-                    values.add(new ArrayList<>(childVector.values().subList(offset, offset + arraySize)));
+                    List<Object> slice = new ArrayList<>(arraySize);
+                    for (int k = 0; k < arraySize; k++) {
+                        slice.add(childVector.getObject(offset + k));
+                    }
+                    values[row] = slice;
                 }
-                yield new DecodedVector(type, vectorType, values);
+                yield new DecodedVector.ObjectVec(type, values);
             }
             default -> throw new QuackUnsupportedTypeException(
                     "Variable-width physical type " + physicalType + " is not supported");
         };
     }
 
-    private static List<Object> decodeFixedValues(LogicalType type, PhysicalType physicalType,
-                                                  byte[] bytes, int count, boolean[] validity) {
+    // ---- typed fixed-flat decoding ----
+
+    private static DecodedVector decodeFixedFlatVector(LogicalType type, PhysicalType physicalType,
+                                                       byte[] bytes, int count, boolean[] validity) {
         BinaryReader reader = new BinaryReader(bytes);
-        List<Object> values = new ArrayList<>(count);
-        for (int i = 0; i < count; i++) {
-            Object v = decodeFixedValue(reader, type, physicalType);
-            values.add(isValid(validity, i) ? v : null);
+
+        // Logical types that materialize into non-primitive Java objects always go via ObjectVec.
+        if (needsObjectMaterialization(type, physicalType)) {
+            Object[] values = new Object[count];
+            for (int i = 0; i < count; i++) {
+                Object v = decodeFixedValue(reader, type, physicalType);
+                values[i] = isValid(validity, i) ? v : null;
+            }
+            reader.assertEof();
+            return new DecodedVector.ObjectVec(type, values);
         }
+
+        // Primitive path: write directly into the right typed array.
+        DecodedVector vec = switch (physicalType) {
+            case BOOL -> {
+                boolean[] arr = new boolean[count];
+                for (int i = 0; i < count; i++) arr[i] = reader.readFixedUint8() != 0;
+                yield new DecodedVector.BoolVec(type, arr, validity);
+            }
+            case INT8 -> {
+                byte[] arr = new byte[count];
+                for (int i = 0; i < count; i++) arr[i] = reader.readFixedInt8();
+                yield new DecodedVector.ByteVec(type, arr, validity);
+            }
+            case UINT8 -> {
+                short[] arr = new short[count];
+                for (int i = 0; i < count; i++) arr[i] = (short) reader.readFixedUint8();
+                yield new DecodedVector.ShortVec(type, arr, validity);
+            }
+            case INT16 -> {
+                short[] arr = new short[count];
+                for (int i = 0; i < count; i++) arr[i] = reader.readFixedInt16();
+                yield new DecodedVector.ShortVec(type, arr, validity);
+            }
+            case UINT16 -> {
+                int[] arr = new int[count];
+                for (int i = 0; i < count; i++) arr[i] = reader.readFixedUint16();
+                yield new DecodedVector.IntVec(type, arr, validity);
+            }
+            case INT32 -> {
+                int[] arr = new int[count];
+                for (int i = 0; i < count; i++) arr[i] = reader.readFixedInt32();
+                yield new DecodedVector.IntVec(type, arr, validity);
+            }
+            case UINT32 -> {
+                long[] arr = new long[count];
+                for (int i = 0; i < count; i++) arr[i] = reader.readFixedUint32();
+                yield new DecodedVector.LongVec(type, arr, validity);
+            }
+            case INT64, UINT64 -> {
+                long[] arr = new long[count];
+                for (int i = 0; i < count; i++) arr[i] = reader.readFixedInt64();
+                yield new DecodedVector.LongVec(type, arr, validity);
+            }
+            case FLOAT -> {
+                float[] arr = new float[count];
+                for (int i = 0; i < count; i++) arr[i] = reader.readFixedFloat32();
+                yield new DecodedVector.FloatVec(type, arr, validity);
+            }
+            case DOUBLE -> {
+                double[] arr = new double[count];
+                for (int i = 0; i < count; i++) arr[i] = reader.readFixedFloat64();
+                yield new DecodedVector.DoubleVec(type, arr, validity);
+            }
+            default -> throw new QuackUnsupportedTypeException(
+                    "Primitive vector path not implemented for physical type " + physicalType);
+        };
         reader.assertEof();
-        return values;
+        return vec;
+    }
+
+    /**
+     * True when the logical type requires per-row Java object
+     * materialization (DECIMAL, DATE, TIME, TIMESTAMP variants, UUID,
+     * INTERVAL, HUGEINT family, ENUM) so we can't use a primitive array.
+     */
+    private static boolean needsObjectMaterialization(LogicalType type, PhysicalType physicalType) {
+        return switch (type.id()) {
+            case DECIMAL, DATE, TIME, TIME_NS, TIME_TZ,
+                 TIMESTAMP, TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP_NS, TIMESTAMP_TZ,
+                 UUID, INTERVAL, HUGEINT, UHUGEINT, ENUM -> true;
+            default -> physicalType == PhysicalType.INTERVAL
+                    || physicalType == PhysicalType.INT128
+                    || physicalType == PhysicalType.UINT128;
+        };
     }
 
     private static Object decodeFixedValue(BinaryReader reader, LogicalType type, PhysicalType physicalType) {
@@ -263,11 +345,8 @@ public final class VectorCodec {
                         : (Object) value;
             }
             case UINT32 -> decodeEnumOrLong(type, reader.readFixedUint32());
-            case INT64 -> {
-                long value = reader.readFixedInt64();
-                yield decodeInt64LogicalValue(type, value);
-            }
-            case UINT64 -> reader.readFixedUint64(); // raw long bits, treat as unsigned
+            case INT64 -> decodeInt64LogicalValue(type, reader.readFixedInt64());
+            case UINT64 -> reader.readFixedUint64();
             case FLOAT -> reader.readFixedFloat32();
             case DOUBLE -> reader.readFixedFloat64();
             case INT128 -> {
@@ -306,7 +385,7 @@ public final class VectorCodec {
         return switch (type.id()) {
             case TIME -> microsToLocalTime(value);
             case TIME_NS -> LocalTime.ofNanoOfDay(value);
-            case TIME_TZ -> value; // raw bits; full TIME_TZ decode is TODO
+            case TIME_TZ -> value;
             case TIMESTAMP_SEC -> LocalDateTime.ofInstant(Instant.ofEpochSecond(value), ZoneOffset.UTC);
             case TIMESTAMP_MS -> LocalDateTime.ofInstant(Instant.ofEpochMilli(value), ZoneOffset.UTC);
             case TIMESTAMP -> microsToLocalDateTime(value);
@@ -334,9 +413,7 @@ public final class VectorCodec {
     }
 
     private static Object decodeEnumOrInt(LogicalType type, int index) {
-        if (type.id() != LogicalTypeId.ENUM) {
-            return index;
-        }
+        if (type.id() != LogicalTypeId.ENUM) return index;
         List<String> values = PhysicalTypeUtil.getEnumValues(type);
         if (index < 0 || index >= values.size()) {
             throw new QuackProtocolException("ENUM index " + index + " is out of range");
@@ -345,9 +422,7 @@ public final class VectorCodec {
     }
 
     private static Object decodeEnumOrLong(LogicalType type, long index) {
-        if (type.id() != LogicalTypeId.ENUM) {
-            return index;
-        }
+        if (type.id() != LogicalTypeId.ENUM) return index;
         if (index < 0 || index >= Integer.MAX_VALUE) {
             throw new QuackProtocolException("ENUM index " + index + " is out of range");
         }
@@ -427,7 +502,6 @@ public final class VectorCodec {
         return entries;
     }
 
-    /** Serialize a chunk wrapper. For now only used by tests / future APPEND. */
     public static void encodeDataChunkWrapper(BinaryWriter writer, DataChunk chunk) {
         writer.writeObject(obj -> obj.writeField(300, () -> encodeDataChunk(obj, chunk)));
     }
@@ -440,9 +514,6 @@ public final class VectorCodec {
             obj.writeField(100, () -> obj.writeUleb(chunk.rowCount()));
             obj.writeField(101, () -> obj.writeList(chunk.types(),
                     (t, i) -> LogicalTypeCodec.encode(obj, t)));
-            // Vector encoding is decoder-complete; encoder is intentionally stubbed
-            // for now since this driver only consumes results. APPEND support will
-            // fill this in.
             throw new QuackUnsupportedTypeException(
                     "Vector encoding is not yet implemented (decoder is); APPEND support is on the roadmap");
         });

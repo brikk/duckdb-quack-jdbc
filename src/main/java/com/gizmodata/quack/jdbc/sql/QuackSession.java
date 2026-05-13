@@ -9,8 +9,11 @@ import com.gizmodata.quack.jdbc.message.MessageType;
 import com.gizmodata.quack.jdbc.message.QuackMessage;
 import com.gizmodata.quack.jdbc.transport.QuackHttpTransport;
 import com.gizmodata.quack.jdbc.transport.QuackUri;
+import com.gizmodata.quack.jdbc.type.LogicalType;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
@@ -67,42 +70,27 @@ public final class QuackSession implements AutoCloseable {
                 () -> new QuackProtocolException("Server did not return a connection_id"));
     }
 
-    public PreparedResult prepare(String sql) {
+    /**
+     * Open a streaming cursor over a prepared query. Only the initial
+     * batch of chunks is fetched up front (whatever the server included
+     * in {@code PREPARE_RESPONSE}); subsequent chunks are fetched on
+     * demand as the caller calls {@link Cursor#nextChunk()}.
+     */
+    public Cursor cursor(String sql) {
         if (closed) {
             throw new QuackProtocolException("Session is closed");
         }
-        long qid = nextQueryId();
         QuackMessage.PrepareRequest request = new QuackMessage.PrepareRequest(
                 MessageHeader.of(MessageType.PREPARE_REQUEST)
                         .withConnectionId(connectionId)
-                        .withClientQueryId(qid),
+                        .withClientQueryId(nextQueryId()),
                 sql);
         QuackMessage response = transport.send(request);
         if (!(response instanceof QuackMessage.PrepareResponse prep)) {
             throw new QuackProtocolException(
                     "Expected PREPARE_RESPONSE, got " + response.getClass().getSimpleName());
         }
-
-        List<DataChunk> all = new ArrayList<>(prep.results());
-        HugeIntParts resultUuid = prep.resultUuid();
-        boolean more = prep.needsMoreFetch();
-        long queryId = qid;
-        while (more) {
-            queryId = nextQueryId();
-            QuackMessage.FetchRequest fetch = new QuackMessage.FetchRequest(
-                    MessageHeader.of(MessageType.FETCH_REQUEST)
-                            .withConnectionId(connectionId)
-                            .withClientQueryId(queryId),
-                    resultUuid);
-            QuackMessage fr = transport.send(fetch);
-            if (!(fr instanceof QuackMessage.FetchResponse fetchResp)) {
-                throw new QuackProtocolException(
-                        "Expected FETCH_RESPONSE, got " + fr.getClass().getSimpleName());
-            }
-            all.addAll(fetchResp.results());
-            more = fetchResp.batchIndex().isPresent();
-        }
-        return new PreparedResult(prep.resultNames(), prep.resultTypes(), all);
+        return new Cursor(this, prep);
     }
 
     @Override
@@ -128,13 +116,118 @@ public final class QuackSession implements AutoCloseable {
         return queryIdSeq.getAndIncrement();
     }
 
-    public record PreparedResult(List<String> columnNames,
-                                 List<com.gizmodata.quack.jdbc.type.LogicalType> columnTypes,
-                                 List<DataChunk> chunks) {
-        public int totalRowCount() {
-            int total = 0;
-            for (DataChunk c : chunks) total += c.rowCount();
-            return total;
+    private List<DataChunk> fetchMoreChunks(HugeIntParts resultUuid, FetchState state) {
+        QuackMessage.FetchRequest fetch = new QuackMessage.FetchRequest(
+                MessageHeader.of(MessageType.FETCH_REQUEST)
+                        .withConnectionId(connectionId)
+                        .withClientQueryId(nextQueryId()),
+                resultUuid);
+        QuackMessage fr = transport.send(fetch);
+        if (!(fr instanceof QuackMessage.FetchResponse fetchResp)) {
+            throw new QuackProtocolException(
+                    "Expected FETCH_RESPONSE, got " + fr.getClass().getSimpleName());
+        }
+        state.hasMore = fetchResp.batchIndex().isPresent();
+        return fetchResp.results();
+    }
+
+    /**
+     * Streaming cursor over the chunks of a Quack-prepared query.
+     *
+     * <p>Holds at most one server batch in memory at a time
+     * (whatever {@code quack_fetch_batch_chunks} is set to on the
+     * server, default 12). {@link #nextChunk()} pulls from the
+     * buffered batch and issues a fresh {@code FETCH_REQUEST} when
+     * the buffer is empty and the server signalled more chunks were
+     * available.
+     */
+    public static final class Cursor implements AutoCloseable {
+
+        private final QuackSession session;
+        private final List<String> columnNames;
+        private final List<LogicalType> columnTypes;
+        private final HugeIntParts resultUuid;
+        private final Deque<DataChunk> buffered;
+        private final FetchState fetchState;
+        private boolean closed;
+        private int materializedRowCount;
+
+        Cursor(QuackSession session, QuackMessage.PrepareResponse prep) {
+            this.session = session;
+            this.columnNames = prep.resultNames();
+            this.columnTypes = prep.resultTypes();
+            this.resultUuid = prep.resultUuid();
+            this.buffered = new ArrayDeque<>(prep.results());
+            this.fetchState = new FetchState(prep.needsMoreFetch());
+            for (DataChunk c : prep.results()) materializedRowCount += c.rowCount();
+        }
+
+        public List<String> columnNames() {
+            return columnNames;
+        }
+
+        public List<LogicalType> columnTypes() {
+            return columnTypes;
+        }
+
+        /** Peek at the first buffered chunk without advancing the cursor. */
+        public DataChunk peekFirstChunk() {
+            return buffered.peek();
+        }
+
+        /**
+         * Return the next chunk, fetching from the server if the local
+         * buffer is empty and more chunks are available. Returns
+         * {@code null} when the result set is exhausted.
+         */
+        public DataChunk nextChunk() {
+            if (closed) return null;
+            if (buffered.isEmpty() && fetchState.hasMore) {
+                List<DataChunk> next = session.fetchMoreChunks(resultUuid, fetchState);
+                buffered.addAll(next);
+                for (DataChunk c : next) materializedRowCount += c.rowCount();
+            }
+            return buffered.poll();
+        }
+
+        /** Drain every remaining chunk and return them in order. */
+        public List<DataChunk> drainAll() {
+            List<DataChunk> all = new ArrayList<>(buffered);
+            buffered.clear();
+            while (fetchState.hasMore) {
+                List<DataChunk> next = session.fetchMoreChunks(resultUuid, fetchState);
+                all.addAll(next);
+                for (DataChunk c : next) materializedRowCount += c.rowCount();
+            }
+            return all;
+        }
+
+        /**
+         * Approximate count of rows already pulled across the wire (not the
+         * total result-set size — only what the cursor has seen). Useful for
+         * diagnostics and tests.
+         */
+        public int materializedRowCount() {
+            return materializedRowCount;
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+            buffered.clear();
+            // Quack has no explicit "release result" message yet; the server
+            // releases state on DISCONNECT or after all chunks have been
+            // fetched. Drain in the background if needed to free server-side
+            // state, but for now leave any un-fetched chunks to be reaped on
+            // disconnect — closing a JDBC ResultSet shouldn't block.
+        }
+    }
+
+    private static final class FetchState {
+        boolean hasMore;
+
+        FetchState(boolean hasMore) {
+            this.hasMore = hasMore;
         }
     }
 }

@@ -6,6 +6,39 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — Streaming cursor + typed primitive vectors (memory rewrite)
+
+- **Streaming cursor.** `QuackSession.prepare(sql)` is replaced by
+  `QuackSession.cursor(sql)`, which returns a `QuackSession.Cursor`
+  that holds at most one server batch in memory at a time. The
+  initial PREPARE_RESPONSE is parsed eagerly; subsequent
+  FETCH_REQUESTs fire only when the local buffer drains. Peak driver
+  memory for a million-row SELECT now grows with the server batch
+  size (default ~12 chunks ≈ a few hundred KB), not with the total
+  result-set row count.
+- **Typed primitive vectors.** `DecodedVector` becomes a sealed
+  interface with primitive-array records (`BoolVec`, `ByteVec`,
+  `ShortVec`, `IntVec`, `LongVec`, `FloatVec`, `DoubleVec`) plus an
+  `ObjectVec` fallback. Fixed-width primitive logical types
+  (BOOLEAN, TINYINT..BIGINT and unsigned siblings, FLOAT, DOUBLE)
+  now decode directly into `int[]`/`long[]`/`double[]`/etc. instead
+  of `List<Object>` of boxed wrappers — roughly 4-8× smaller in
+  memory for those columns, matching the bytes-on-the-wire footprint.
+  Logical types whose materialized Java form is not a primitive
+  (DECIMAL, DATE, TIME / TIME_NS / TIME_TZ, TIMESTAMP variants, UUID,
+  INTERVAL, HUGEINT/UHUGEINT, ENUM, VARCHAR, BLOB, STRUCT, LIST,
+  ARRAY, MAP) stay in `ObjectVec`.
+- `ResultSet` getters route through the new typed accessors
+  (`DecodedVector.getInt`, `getLong`, `getDouble`, etc.) so reading
+  a primitive column no longer triggers an `Integer.valueOf`
+  per row.
+- `QuackConnection.session()` is now `public` so advanced callers
+  can open a `Cursor` directly and drain chunks without going through
+  the JDBC `ResultSet` surface.
+- 4 new integration tests in `StreamingIntegrationTest` pin the
+  lazy-fetch behavior and the typed-vector layout (total: 56 tests
+  passing).
+
 ### Added — JDBC coverage parity with DuckDB's own driver
 
 Closed the eight method-coverage gaps surfaced by a side-by-side audit

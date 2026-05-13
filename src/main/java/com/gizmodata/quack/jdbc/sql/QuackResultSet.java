@@ -33,21 +33,22 @@ import java.util.UUID;
 public final class QuackResultSet extends SkeletalResultSet {
 
     private final Statement statement;
-    private final List<DataChunk> chunks;
+    private final QuackSession.Cursor cursor;
     private final List<String> columnNames;
     private final List<LogicalType> columnTypes;
     private final Map<String, Integer> columnIndexByName;
-    private int chunkIndex = -1;
+    private DataChunk currentChunk;
     private int rowInChunk = -1;
     private int absoluteRow = 0;
     private boolean wasNull;
     private boolean closed;
+    private boolean exhausted;
 
-    public QuackResultSet(Statement statement, QuackSession.PreparedResult result) {
+    public QuackResultSet(Statement statement, QuackSession.Cursor cursor) {
         this.statement = statement;
-        this.chunks = result.chunks();
-        this.columnNames = result.columnNames();
-        this.columnTypes = result.columnTypes();
+        this.cursor = cursor;
+        this.columnNames = cursor.columnNames();
+        this.columnTypes = cursor.columnTypes();
         this.columnIndexByName = new HashMap<>();
         for (int i = 0; i < columnNames.size(); i++) {
             columnIndexByName.putIfAbsent(columnNames.get(i).toUpperCase(), i);
@@ -57,18 +58,19 @@ public final class QuackResultSet extends SkeletalResultSet {
     @Override
     public boolean next() throws SQLException {
         checkOpen();
-        if (chunks.isEmpty()) return false;
-        if (chunkIndex < 0) {
-            chunkIndex = 0;
+        if (exhausted) return false;
+        if (currentChunk == null) {
+            currentChunk = cursor.nextChunk();
             rowInChunk = 0;
         } else {
             rowInChunk++;
         }
-        while (chunkIndex < chunks.size() && rowInChunk >= chunks.get(chunkIndex).rowCount()) {
-            chunkIndex++;
+        while (currentChunk != null && rowInChunk >= currentChunk.rowCount()) {
+            currentChunk = cursor.nextChunk();
             rowInChunk = 0;
         }
-        if (chunkIndex >= chunks.size()) {
+        if (currentChunk == null) {
+            exhausted = true;
             return false;
         }
         absoluteRow++;
@@ -78,6 +80,7 @@ public final class QuackResultSet extends SkeletalResultSet {
     @Override
     public void close() {
         closed = true;
+        cursor.close();
     }
 
     @Override
@@ -119,12 +122,11 @@ public final class QuackResultSet extends SkeletalResultSet {
         if (columnIndex < 1 || columnIndex > columnNames.size()) {
             throw new SQLException("Column index out of range: " + columnIndex);
         }
-        if (chunkIndex < 0 || chunkIndex >= chunks.size()) {
+        if (currentChunk == null) {
             throw new SQLException("Not on a row");
         }
-        DataChunk chunk = chunks.get(chunkIndex);
-        DecodedVector col = chunk.columns().get(columnIndex - 1);
-        Object value = col.values().get(rowInChunk);
+        DecodedVector col = currentChunk.columns().get(columnIndex - 1);
+        Object value = col.getObject(rowInChunk);
         wasNull = (value == null);
         return value;
     }

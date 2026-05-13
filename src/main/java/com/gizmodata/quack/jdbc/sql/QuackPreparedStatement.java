@@ -163,8 +163,9 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
         // return null per JDBC contract.
         try {
             String wrapped = "SELECT * FROM (" + interpolateWithDefaults() + ") LIMIT 0";
-            QuackSession.PreparedResult result = connection.session().prepare(wrapped);
-            return new QuackResultSetMetaData(result.columnNames(), result.columnTypes());
+            try (QuackSession.Cursor cursor = connection.session().cursor(wrapped)) {
+                return new QuackResultSetMetaData(cursor.columnNames(), cursor.columnTypes());
+            }
         } catch (RuntimeException ignored) {
             return null;
         }

@@ -27,7 +27,7 @@ public final class QuackConnection extends SkeletalConnection {
         this.catalog = uri.database().orElse(null);
     }
 
-    QuackSession session() {
+    public QuackSession session() {
         return session;
     }
 

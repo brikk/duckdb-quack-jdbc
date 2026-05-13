@@ -1,6 +1,7 @@
 package com.gizmodata.quack.jdbc.sql;
 
 import com.gizmodata.quack.jdbc.QuackException;
+import com.gizmodata.quack.jdbc.message.DataChunk;
 import com.gizmodata.quack.jdbc.type.LogicalTypeId;
 
 import java.sql.Connection;
@@ -82,14 +83,16 @@ public class QuackStatement extends SkeletalStatement {
     public boolean execute(String sql) throws SQLException {
         checkOpen();
         try {
-            QuackSession.PreparedResult result = connection.session().prepare(sql);
-            if (looksLikeRowsAffected(result)) {
-                updateCount = extractRowsAffected(result);
+            QuackSession.Cursor cursor = connection.session().cursor(sql);
+            DataChunk first = cursor.peekFirstChunk();
+            if (looksLikeRowsAffected(cursor, first)) {
+                updateCount = extractRowsAffected(first);
+                cursor.close();
                 currentResultSet = null;
                 return false;
             }
             updateCount = -1;
-            currentResultSet = new QuackResultSet(this, result);
+            currentResultSet = new QuackResultSet(this, cursor);
             return true;
         } catch (RuntimeException e) {
             if (e instanceof QuackException) {
@@ -99,23 +102,23 @@ public class QuackStatement extends SkeletalStatement {
         }
     }
 
-    private boolean looksLikeRowsAffected(QuackSession.PreparedResult result) {
-        if (result.columnNames().size() != 1) return false;
-        String name = result.columnNames().get(0);
+    private boolean looksLikeRowsAffected(QuackSession.Cursor cursor, DataChunk first) {
+        if (cursor.columnNames().size() != 1) return false;
+        String name = cursor.columnNames().get(0);
         if (!"Count".equalsIgnoreCase(name) && !"rows_affected".equalsIgnoreCase(name)) {
             return false;
         }
-        if (result.columnTypes().isEmpty()) return false;
-        LogicalTypeId id = result.columnTypes().get(0).id();
-        return id == LogicalTypeId.BIGINT || id == LogicalTypeId.INTEGER
-                || id == LogicalTypeId.UBIGINT || id == LogicalTypeId.UINTEGER;
+        if (cursor.columnTypes().isEmpty()) return false;
+        LogicalTypeId id = cursor.columnTypes().get(0).id();
+        return (id == LogicalTypeId.BIGINT || id == LogicalTypeId.INTEGER
+                || id == LogicalTypeId.UBIGINT || id == LogicalTypeId.UINTEGER)
+                && first != null
+                && first.rowCount() <= 1;
     }
 
-    private int extractRowsAffected(QuackSession.PreparedResult result) {
-        if (result.chunks().isEmpty()) return 0;
-        var chunk = result.chunks().get(0);
-        if (chunk.rowCount() == 0 || chunk.columns().isEmpty()) return 0;
-        Object value = chunk.columns().get(0).values().get(0);
+    private int extractRowsAffected(DataChunk chunk) {
+        if (chunk == null || chunk.rowCount() == 0 || chunk.columns().isEmpty()) return 0;
+        Object value = chunk.columns().get(0).getObject(0);
         if (value instanceof Number n) {
             long v = n.longValue();
             return v > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) v;
