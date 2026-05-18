@@ -7,6 +7,6 @@ public interface QuackTransportFactory {
     QuackTransport create(QuackUri uri);
 
     static QuackTransportFactory http() {
-        return uri -> new QuackHttpTransport(uri.httpUri());
+        return QuackHttpTransport::from;
     }
 }

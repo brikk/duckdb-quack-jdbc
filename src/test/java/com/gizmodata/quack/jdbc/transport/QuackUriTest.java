@@ -2,10 +2,12 @@ package com.gizmodata.quack.jdbc.transport;
 
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class QuackUriTest {
@@ -52,5 +54,32 @@ class QuackUriTest {
         assertEquals("http://h:9494/quack", u.httpUri().toString());
         QuackUri u2 = QuackUri.parse("jdbc:quack://h:9494?tls=true");
         assertEquals("https://h:9494/quack", u2.httpUri().toString());
+    }
+
+    @Test
+    void parsesTimeoutProperties() {
+        QuackUri u = QuackUri.parse("jdbc:quack://h:9494?connectTimeout=5&requestTimeout=PT30S");
+        assertEquals(Duration.ofSeconds(5), u.connectTimeout());
+        assertEquals(Duration.ofSeconds(30), u.requestTimeout());
+    }
+
+    @Test
+    void timeoutPropertiesCanComeFromProperties() {
+        Properties props = new Properties();
+        props.setProperty("connectTimeout", "7");
+        props.setProperty("requestTimeout", "PT45S");
+
+        QuackUri u = QuackUri.parse("jdbc:quack://h:9494", props);
+
+        assertEquals(Duration.ofSeconds(7), u.connectTimeout());
+        assertEquals(Duration.ofSeconds(45), u.requestTimeout());
+    }
+
+    @Test
+    void timeoutPropertiesRejectInvalidValues() {
+        assertThrows(RuntimeException.class,
+                () -> QuackUri.parse("jdbc:quack://h:9494?connectTimeout=0").connectTimeout());
+        assertThrows(RuntimeException.class,
+                () -> QuackUri.parse("jdbc:quack://h:9494?requestTimeout=forever").requestTimeout());
     }
 }

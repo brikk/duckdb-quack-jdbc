@@ -94,6 +94,8 @@ jdbc:quack://host[:port][/database][?token=…&tls=…]
 | `token`          | (none)  | Authentication token. Also accepted via JDBC `Properties` as `token`.    |
 | `tls`            | false   | `true` → use `https://` for the underlying HTTP transport.               |
 | `useEncryption`  | false   | Alias for `tls` (matches the gizmosql-jdbc-driver convention).           |
+| `connectTimeout` | 10      | HTTP connect timeout, as seconds or an ISO-8601 duration like `PT5S`.    |
+| `requestTimeout` | 60      | Per-request HTTP timeout, as seconds or an ISO-8601 duration like `PT30S`. |
 
 `token` and `tls` can be set on the URL or via `java.util.Properties`
 passed to `DriverManager.getConnection`. URL values take precedence.
@@ -104,16 +106,16 @@ Applications that need to customize the HTTP layer can bypass
 `DriverManager` and pass a transport factory to `QuackDriver`:
 
 ```java
-HttpClient httpClient = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(5))
-        .build();
-Duration requestTimeout = Duration.ofSeconds(30);
-
 QuackDriver driver = new QuackDriver();
 try (Connection conn = driver.connect(
-        "jdbc:quack://127.0.0.1:9494?token=my-secret-token",
+        "jdbc:quack://127.0.0.1:9494?token=my-secret-token&connectTimeout=5&requestTimeout=30",
         new Properties(),
-        uri -> new QuackHttpTransport(uri.httpUri(), httpClient, requestTimeout))) {
+        uri -> {
+            HttpClient httpClient = HttpClient.newBuilder()
+                    .connectTimeout(uri.connectTimeout())
+                    .build();
+            return new QuackHttpTransport(uri.httpUri(), httpClient, uri.requestTimeout());
+        })) {
     // use the connection normally
 }
 ```

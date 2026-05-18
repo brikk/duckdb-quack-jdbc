@@ -142,4 +142,14 @@ class QuackHttpTransportTest {
                         || e.getMessage().toLowerCase().contains("host"),
                 "expected resolution error, got: " + e.getMessage());
     }
+
+    @Test
+    void factoryUsesTimeoutsFromUri() {
+        QuackUri uri = QuackUri.parse("jdbc:quack://localhost:9494?connectTimeout=3&requestTimeout=PT9S");
+
+        QuackHttpTransport transport = QuackHttpTransport.from(uri);
+
+        assertEquals(Duration.ofSeconds(3), transport.connectTimeout().orElseThrow());
+        assertEquals(Duration.ofSeconds(9), transport.requestTimeout());
+    }
 }

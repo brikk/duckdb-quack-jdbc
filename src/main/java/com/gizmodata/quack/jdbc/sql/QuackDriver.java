@@ -60,7 +60,17 @@ public final class QuackDriver implements Driver {
         tls.choices = new String[]{"true", "false"};
         tls.required = false;
 
-        return new DriverPropertyInfo[]{token, tls};
+        DriverPropertyInfo connectTimeout = new DriverPropertyInfo("connectTimeout",
+                info != null ? info.getProperty("connectTimeout") : null);
+        connectTimeout.description = "HTTP connect timeout as seconds or ISO-8601 duration (default: 10 seconds).";
+        connectTimeout.required = false;
+
+        DriverPropertyInfo requestTimeout = new DriverPropertyInfo("requestTimeout",
+                info != null ? info.getProperty("requestTimeout") : null);
+        requestTimeout.description = "Per-request HTTP timeout as seconds or ISO-8601 duration (default: 60 seconds).";
+        requestTimeout.required = false;
+
+        return new DriverPropertyInfo[]{token, tls, connectTimeout, requestTimeout};
     }
 
     @Override

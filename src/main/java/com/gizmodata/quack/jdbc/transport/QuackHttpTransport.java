@@ -21,6 +21,7 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.channels.ClosedChannelException;
 import java.time.Duration;
+import java.util.Optional;
 
 /**
  * HTTP transport for the Quack protocol. Sends Quack messages as
@@ -37,21 +38,39 @@ import java.time.Duration;
  */
 public final class QuackHttpTransport implements QuackTransport {
 
+    public static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(10);
+    public static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(60);
+
     private final URI endpoint;
     private final HttpClient httpClient;
     private final Duration requestTimeout;
 
     public QuackHttpTransport(URI endpoint) {
         this(endpoint, HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
+                .connectTimeout(DEFAULT_CONNECT_TIMEOUT)
                 .build(),
-                Duration.ofSeconds(60));
+                DEFAULT_REQUEST_TIMEOUT);
     }
 
     public QuackHttpTransport(URI endpoint, HttpClient httpClient, Duration requestTimeout) {
         this.endpoint = endpoint;
         this.httpClient = httpClient;
         this.requestTimeout = requestTimeout;
+    }
+
+    public static QuackHttpTransport from(QuackUri uri) {
+        HttpClient client = HttpClient.newBuilder()
+                .connectTimeout(uri.connectTimeout())
+                .build();
+        return new QuackHttpTransport(uri.httpUri(), client, uri.requestTimeout());
+    }
+
+    Duration requestTimeout() {
+        return requestTimeout;
+    }
+
+    Optional<Duration> connectTimeout() {
+        return httpClient.connectTimeout();
     }
 
     @Override

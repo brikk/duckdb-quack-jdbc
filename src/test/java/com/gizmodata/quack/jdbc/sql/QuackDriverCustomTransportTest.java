@@ -8,6 +8,7 @@ import com.gizmodata.quack.jdbc.transport.QuackUri;
 import org.junit.jupiter.api.Test;
 
 import java.sql.Connection;
+import java.sql.DriverPropertyInfo;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
@@ -69,6 +70,19 @@ class QuackDriverCustomTransportTest {
 
         assertTrue(exception.getMessage().contains("transportFactory returned null"),
                 "expected null factory result message, got: " + exception.getMessage());
+    }
+
+    @Test
+    void propertyInfoIncludesTimeouts() {
+        QuackDriver driver = new QuackDriver();
+
+        DriverPropertyInfo[] propertyInfo = driver.getPropertyInfo("jdbc:quack://example.test:1234",
+                new Properties());
+
+        assertEquals("token", propertyInfo[0].name);
+        assertEquals("tls", propertyInfo[1].name);
+        assertEquals("connectTimeout", propertyInfo[2].name);
+        assertEquals("requestTimeout", propertyInfo[3].name);
     }
 
     private static final class RecordingTransport implements QuackTransport {

@@ -7,6 +7,8 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -96,6 +98,14 @@ public record QuackUri(String host,
         }
     }
 
+    public Duration connectTimeout() {
+        return parseDurationProperty("connectTimeout", QuackHttpTransport.DEFAULT_CONNECT_TIMEOUT);
+    }
+
+    public Duration requestTimeout() {
+        return parseDurationProperty("requestTimeout", QuackHttpTransport.DEFAULT_REQUEST_TIMEOUT);
+    }
+
     public String quackUri() {
         return "quack:" + host + ":" + port;
     }
@@ -106,5 +116,28 @@ public record QuackUri(String host,
             case "true", "1", "yes", "on" -> true;
             default -> false;
         };
+    }
+
+    private Duration parseDurationProperty(String key, Duration defaultValue) {
+        String value = properties.get(key);
+        if (value == null || value.isBlank()) {
+            return defaultValue;
+        }
+        String trimmed = value.trim();
+        try {
+            Duration duration;
+            if (trimmed.chars().allMatch(Character::isDigit)) {
+                duration = Duration.ofSeconds(Long.parseLong(trimmed));
+            } else {
+                duration = Duration.parse(trimmed);
+            }
+            if (duration.isZero() || duration.isNegative()) {
+                throw new QuackException("Quack JDBC property " + key + " must be positive: " + value);
+            }
+            return duration;
+        } catch (DateTimeParseException | NumberFormatException e) {
+            throw new QuackException("Quack JDBC property " + key
+                    + " must be a positive number of seconds or ISO-8601 duration: " + value, e);
+        }
     }
 }
