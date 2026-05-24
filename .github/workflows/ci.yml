@@ -107,12 +107,38 @@ jobs:
           (cd release && sha256sum * > SHA256SUMS)
           ls -la release/
 
+      - name: Extract release notes from CHANGELOG.md
+        id: changelog
+        run: |
+          # Strip the leading 'v' from the tag (refs/tags/v1.2.3 -> 1.2.3)
+          # and pull the matching "## [VERSION] ..." section out of
+          # CHANGELOG.md (stop at the next "## [" heading). Save to
+          # release_notes.md; fall back to auto-generated notes if the
+          # section is missing so the release still gets created.
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Extracting release notes for version: ${VERSION}"
+          awk -v ver="${VERSION}" '
+            $0 ~ "^## \\[" ver "\\]" { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release_notes.md
+
+          if [ -s release_notes.md ]; then
+            echo "have_notes=true" >> "$GITHUB_OUTPUT"
+            echo "---- release_notes.md ----"
+            cat release_notes.md
+          else
+            echo "have_notes=false" >> "$GITHUB_OUTPUT"
+            echo "WARNING: no matching CHANGELOG section for ${VERSION}; release will use auto-generated notes."
+          fi
+
       - name: Create / update GitHub Release with assets
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
-          generate_release_notes: true
+          body_path: ${{ steps.changelog.outputs.have_notes == 'true' && 'release_notes.md' || '' }}
+          generate_release_notes: ${{ steps.changelog.outputs.have_notes != 'true' }}
           files: |
             release/quack-jdbc-${{ steps.artifacts.outputs.version }}.jar
             release/quack-jdbc.jar
