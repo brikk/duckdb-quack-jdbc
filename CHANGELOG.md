@@ -8,6 +8,74 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 (nothing yet)
 
+## [0.3.0] — 2026-07-21
+
+First release of the brikk fork. Published under the fork coordinates
+`dev.brikk.duckdb:quack-jdbc` (upstream is `com.gizmodata:quack-jdbc`).
+This release focuses on full nested-type support (STRUCT / LIST / ARRAY /
+MAP / ENUM) across reads, `getObject`, APPEND encoding, and
+`ResultSetMetaData`, verified for parity against DuckDB's own JDBC driver.
+
+### Changed — fork coordinates
+
+- **groupId is now `dev.brikk.duckdb`** (was `com.gizmodata`); version
+  line resets to `0.3.0`. Artifact id (`quack-jdbc`) is unchanged.
+
+### Added — nested type support
+
+- **`getObject` returns JDBC-standard wrappers for nested columns**,
+  matching DuckDB's own driver: a `java.sql.Array` (`QuackArray`) for
+  LIST / ARRAY, a `java.sql.Struct` (`QuackStruct`) whose
+  `getAttributes()` are the field values in declared order for STRUCT,
+  and a real `java.util.Map` for MAP. `getObject(i, Array.class)` and
+  `getObject(i, Struct.class)` return the wrappers. MAP now materializes
+  to a `LinkedHashMap` in `VectorCodec` instead of a list of key/value
+  entry structs.
+- **Nested APPEND encoding.** `VectorCodec.encodeDataChunk` now
+  recursively encodes STRUCT, LIST, ARRAY, and MAP vectors (previously
+  only scalar and VARCHAR/BLOB), so `QuackSession.appendChunk` can
+  bulk-load nested data. Arbitrary nesting round-trips (`INTEGER[][]`,
+  list-of-struct, struct-of-list, etc.). MAP rows accept a
+  `java.util.Map` and are expanded into key/value entry structs on the
+  wire.
+- **Full element/field type names in `ResultSetMetaData`.**
+  `getColumnTypeName` now reports `INTEGER[]`, `DOUBLE[2]`,
+  `INTEGER[][]`, `STRUCT(name type, ...)`, `MAP(K, V)`, and
+  `ENUM('a', 'b', ...)` instead of bare `LIST` / `ARRAY` / `STRUCT` /
+  `MAP` / `ENUM`, recursing through nested types and double-quoting
+  non-identifier field names. To match duckdb-jdbc exactly, ENUM reports
+  its bare name at the top level and the expanded form only when nested.
+- `getColumnType` reconciled with duckdb-jdbc: MAP now maps to
+  `Types.OTHER` (was `ARRAY`) and ENUM to `Types.OTHER` (was `VARCHAR`).
+
+### Added — duckdb-jdbc oracle parity harness
+
+- New **`-Poracle`** profile runs a live-oracle test suite asserting that
+  quack-jdbc's `ResultSetMetaData` matches DuckDB's own JDBC driver
+  (`org.duckdb:duckdb_jdbc:1.5.4.0`) for a shared type matrix. The oracle
+  driver is reached via `java.sql.*` + `Class.forName`, so there is **no
+  compile-time dependency**; the native jar is pulled only under
+  `-Poracle`. The `oracle` JUnit tag is excluded by default, so a plain
+  `mvn test` stays native-free.
+
+### Tests
+
+- `SqlLiteralTest` — every rendered Java type, floating-point specials
+  (NaN/Infinity), big-number plain formatting, and single-quote escaping /
+  SQL-injection safety.
+- `VectorEncodingDecodeTest` — hand-crafted wire bytes for the CONSTANT,
+  DICTIONARY, and SEQUENCE decode branches plus the FSST rejection guard.
+- `SqlLiteralRoundTripIntegrationTest`, `NestedReadEdgeIntegrationTest`,
+  `NestedAppendIntegrationTest`, `NestedTypeIntegrationTest`,
+  `GetObjectWrapperIntegrationTest`, `OracleParityIntegrationTest`, and
+  `JdbcTypeMapTest` cover the nested read/encode/metadata paths end-to-end
+  against a live DuckDB+Quack server and against the duckdb-jdbc oracle.
+
+### Known gaps
+
+- Reserved-keyword STRUCT field names are not quoted in
+  `getColumnTypeName` (identifier regex only) — a rare edge case.
+
 ## [0.2.0-alpha.4] — 2026-06-12
 
 Contributed in part by Jose Davila-Ciullo (@jdctinuiti) — thanks!
