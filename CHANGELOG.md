@@ -6,7 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-(nothing yet)
+### Fixed
+
+- `Statement.execute(...)` no longer wedges tools that drain results in a
+  loop (DataGrip, DBeaver) after an INSERT/UPDATE/DELETE. `QuackStatement`
+  now overrides `getMoreResults()` (and `getMoreResults(int)`) to advance
+  past the current result — closing any open `ResultSet` and resetting the
+  update count to `-1`. Per the JDBC contract, end-of-results is signalled
+  by `getMoreResults() == false && getUpdateCount() == -1`; previously the
+  update count kept reporting the affected-row count, so the tool's drain
+  loop never terminated and the statement appeared to "never complete"
+  even though the row had already been committed server-side. A failing
+  statement (e.g. a duplicate primary key) was unaffected because it throws
+  immediately. Covered by new drain-loop integration tests, including the
+  reported PRIMARY KEY duplicate-then-new-insert sequence.
 
 ## [0.3.0] — 2026-07-21
 
