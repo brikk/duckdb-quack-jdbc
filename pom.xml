@@ -60,7 +60,7 @@
         <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <junit.version>5.10.2</junit.version>
-        <duckdb.jdbc.version>1.5.4.0</duckdb.jdbc.version>
+        <duckdb.jdbc.version>1.5.5.0</duckdb.jdbc.version>
         <excluded.test.groups>oracle</excluded.test.groups>
     </properties>
 
