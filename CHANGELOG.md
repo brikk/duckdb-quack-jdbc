@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+(nothing yet)
+
+## [0.6.0] — 2026-07-29
+
 ### Changed
 
 - HTTP error messages now include the server's `EXCEPTION_WHAT` response
