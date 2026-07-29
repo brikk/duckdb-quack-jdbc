@@ -6,7 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-(nothing yet)
+### Changed
+
+- HTTP error messages now include the server's `EXCEPTION_WHAT` response
+  header when a non-2xx reply carries it (empty body), so failures like a
+  serialization mismatch report the underlying DuckDB error instead of a
+  bare status code. Ported from upstream
+  [gizmodata/quack-jdbc](https://github.com/gizmodata/quack-jdbc) (their
+  v0.2.0-alpha.6).
 
 ## [0.5.0] — 2026-07-23
 
