@@ -54,6 +54,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and LEB128 terminal bits are validated before unsafe allocation or access.
   Existing constructors retain default limits; see README for configuration
   and memory-accounting limitations. Whole-body deadlines remain separate work.
+- **B39:** Invalid nonblank `tls`/`useEncryption` values now fail before
+  transport creation instead of silently selecting plaintext. Explicit boolean
+  spellings, blank/missing defaults, and existing property precedence are retained.
 
 Review IDs and verification details are recorded in [CODE_REVIEW.md](CODE_REVIEW.md).
 Other findings remain open; the review records current resolution status.

@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
@@ -112,7 +113,8 @@ public record QuackUri(String host,
             }
         }
 
-        boolean tls = parseBool(params.getOrDefault("tls", params.getOrDefault("useEncryption", "false")));
+        String tlsKey = params.containsKey("tls") ? "tls" : "useEncryption";
+        boolean tls = parseBool(tlsKey, params.get(tlsKey));
         Optional<String> token = QuackTokenResolver.resolve(params);
 
         return new QuackUri(host, port, database, tls, token, params);
@@ -184,11 +186,13 @@ public record QuackUri(String host,
         }
     }
 
-    private static boolean parseBool(String value) {
+    private static boolean parseBool(String key, String value) {
         if (value == null) return false;
-        return switch (value.trim().toLowerCase()) {
+        return switch (value.trim().toLowerCase(Locale.ROOT)) {
             case "true", "1", "yes", "on" -> true;
-            default -> false;
+            case "false", "0", "no", "off", "" -> false;
+            default -> throw new QuackException("Quack JDBC property " + key
+                    + " must be true/false, 1/0, yes/no, or on/off");
         };
     }
 

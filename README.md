@@ -122,6 +122,13 @@ resolution checks `token`, then `password`, then `tokenEnv`, then
 they appear on the URL. A pasted or shared URL must not be able to read
 a local secret and send it to whatever host the URL names.
 
+`tls` and its alias `useEncryption` accept `true/false`, `1/0`, `yes/no`,
+or `on/off`, case-insensitively with surrounding ASCII whitespace ignored.
+Unrecognized nonblank values fail connection setup rather than selecting
+plaintext. Missing or blank values retain the existing `false` behavior.
+The `tls` key takes precedence over `useEncryption`; URL values take precedence
+over connection Properties for the same key.
+
 ### Basic timeout configuration
 
 The built-in HTTP transport reads `connectTimeout` and `requestTimeout`

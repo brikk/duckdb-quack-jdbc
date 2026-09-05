@@ -2,7 +2,7 @@
 
 Reviewed 2026-09-05 at `/home/jayson/DEV/brikk/fork-quack-jdbc`, version `0.7.0-SNAPSHOT`.
 
-This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Approved implementation passes resolve B1-B12 and B32; resolution notes and V5-V10 record the scope and verification. Earlier fixes were committed as af771d2, followed by B8 as 5f366ac, B11 as 3104d54, and B7 as 974f8d3. B12/B32 form the next coordinated decoder-hardening pass. Existing changes to `CLAUDE.md` and `DUCKDB_COMPATIBILITY.md` were preserved.
+This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Approved implementation passes resolve B1-B12, B32, and B39; resolution notes and V5-V11 record the scope and verification. Earlier fixes were committed as af771d2, followed by B8 as 5f366ac, B11 as 3104d54, B7 as 974f8d3, and B12/B32 as afa7d03. B39 is the next separate fix. Existing changes to `CLAUDE.md` and `DUCKDB_COMPATIBILITY.md` were preserved.
 
 All source references below are relative to the repository root. `sql/`, `message/`, `codec/`, `type/`, and `transport/` abbreviate directories under `src/main/java/com/gizmodata/quack/jdbc/`. Original finding line numbers refer to the reviewed baseline; subsequent edits may shift them. Keep the original evidence alongside resolution notes.
 
@@ -17,7 +17,7 @@ Use these IDs in requests, changes, tests, and follow-up discussions, for exampl
 | C | C1-C4 | Native-parity observations requiring a compatibility decision before changes |
 | I | I1-I9 | Build, testing, and engineering improvements |
 | S | S1-S8 | Strengths to preserve, not implementation tasks |
-| V | V1-V10 | Verification evidence and limitations, not implementation tasks |
+| V | V1-V11 | Verification evidence and limitations, not implementation tasks |
 
 IDs are permanent and independent of severity, priority rank, and document order. B1-B40 match the original full report's numbered findings, not the shorter chat summary's numbering. Never renumber or reuse an ID; record resolution under the existing item and append new IDs for new findings. If an item needs separate work units, retain its parent ID and introduce suffixes such as B4a and B4b.
 
@@ -309,6 +309,8 @@ Location: `transport/QuackUri.java:114,178-183`.
 
 `tls=treu` produces an HTTP endpoint without error. Parse explicit true and false spellings and reject other nonblank values so a configuration typo cannot silently remove encryption. This is not a demand to change the default for existing local URLs. Confirmed locally.
 
+**Resolution (2026-09-05): resolved.** Effective TLS values accept true/false, 1/0, yes/no, and on/off with locale-independent case handling and the existing trim behavior. Unknown nonblank values throw before resolving tokens or creating a transport; errors identify the option without echoing its value. Missing/blank values remain false. Canonical tls precedence over useEncryption and URL precedence for the same key are preserved. Four regression methods cover URL/Properties sources, both keys, valid spellings, rejected typos, defaults, precedence, and the JDBC exception boundary before transport creation. See V11.
+
 ### B40. URI diagnostics expose authentication material [P2]
 
 Location: `transport/QuackUri.java:18-23,47-63,120-125`.
@@ -471,6 +473,18 @@ Both builds: BUILD SUCCESS; 279 tests, zero failures, zero errors, two environme
 
 No runtime dependencies added. Limits, their conservative accounting, valid-message tuning, and separate deadline limitations are documented. Pre-existing CLAUDE.md and DUCKDB_COMPATIBILITY.md remain untouched and excluded from this pass.
 
+### V11. B39 TLS validation verification
+
+Approved next fixes: B39 then B40, committed separately. The user-requested push of the preceding B7/B12/B32 commits completed first. B39's initial targeted run reproduced three failures before the parser change. Independent read-only review found no actionable B39 issues. A test assertion was corrected to compare the fixed diagnostic rather than treating the invalid token `tru` as distinguishable from the documented word `true` by substring search.
+
+Full build on 2026-09-05:
+
+```bash
+QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn --batch-mode --no-transfer-progress -Poracle clean verify
+```
+
+Result: BUILD SUCCESS; 283 tests, zero failures, zero errors, the same two networking-environment skips as V10. All integration suites ran on DuckDB 1.5.5 with native oracle 1.5.5.0; Java 21.0.2 runtime and Java 17 compilation target. No live TLS endpoint was required: tests assert the selected HTTP scheme and rejection before any transport can be created. B40 diagnostics remain separate work.
+
 ## Top Five Priorities
 
 This is the original approved implementation order, now completed as recorded under each ID and V5. It is retained for traceability, not presented as five outstanding tasks. The ranking prioritized security exposure and the risk of silently persisting incorrect data or violating rollback expectations, not ease of implementation. Original complexity estimates included a complete fix and targeted regression tests; they were not elapsed-time commitments. Low meant localized conversion/validation work, Medium coordinated paths and a boundary-test matrix, and High substantial semantic or API-design risk.
@@ -483,4 +497,4 @@ This is the original approved implementation order, now completed as recorded un
 | 4 | B10 | Select and validate the URL catalog | Low-Medium | Unqualified writes can reach the wrong database. Initialize the server catalog before caching it, handle failed initialization cleanup, and test attached, nonexistent, and quoted catalog names. |
 | 5 | B4 | Preserve exact numeric conversions | Low-Medium | Affects common BIGINT/DECIMAL reads and decimal writes. Remove floating-point and long intermediates for exact values; test large positive/negative integers, scales, and typed BigInteger retrieval. |
 
-These ranks do not change any finding's ID. Approved follow-ups have also resolved B6 and B2+B3 (V6), B8 (V7), B11 (V8), B7 (V9), and B12/B32 (V10). All original P1 findings are resolved. The next agreed priorities are B39+B40 (TLS validation and redacted diagnostics), then B19+B18 (bindings and batch failure counts). Use I4-I6 alongside fixes, address remaining value corruption and JDBC execution/lifecycle/deadlines, and promote verification into CI (I1-I3). C items still require compatibility decisions; cleanup and performance remain tracked by L1-L6 and I7-I9.
+These ranks do not change any finding's ID. Approved follow-ups have also resolved B6 and B2+B3 (V6), B8 (V7), B11 (V8), B7 (V9), B12/B32 (V10), and B39 (V11). All original P1 findings are resolved. The next agreed priority is B40 (redacted diagnostics), then B19+B18 (bindings and batch failure counts). Use I4-I6 alongside fixes, address remaining value corruption and JDBC execution/lifecycle/deadlines, and promote verification into CI (I1-I3). C items still require compatibility decisions; cleanup and performance remain tracked by L1-L6 and I7-I9.

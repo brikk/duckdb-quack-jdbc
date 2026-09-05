@@ -178,6 +178,22 @@ class QuackDriverCustomTransportTest {
     }
 
     @Test
+    void invalidTlsFailsBeforeTransportCreation() {
+        for (String key : new String[]{"tls", "useEncryption"}) {
+            for (boolean inUrl : new boolean[]{true, false}) {
+                Properties properties = new Properties();
+                if (!inUrl) properties.setProperty(key, "treu");
+                SQLException error = assertThrows(SQLException.class, () -> new QuackDriver().connect(
+                        "jdbc:quack://example.test?token=test-secret" + (inUrl ? "&" + key + "=treu" : ""),
+                        properties, uri -> { throw new AssertionError("Must not create a transport for invalid TLS"); }));
+                assertTrue(error.getMessage().contains(key));
+                assertFalse(error.getMessage().contains("test-secret"));
+                assertInstanceOf(QuackException.class, error.getCause());
+            }
+        }
+    }
+
+    @Test
     void sessionKeepsQuackHttpTransportConstructorForBinaryCompatibility() throws Exception {
         Constructor<QuackSession> constructor = QuackSession.class.getConstructor(
                 QuackUri.class, QuackHttpTransport.class);

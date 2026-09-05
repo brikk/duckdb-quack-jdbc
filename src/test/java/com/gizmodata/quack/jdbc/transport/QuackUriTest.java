@@ -8,6 +8,8 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.time.Duration;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -81,6 +83,52 @@ class QuackUriTest {
         assertEquals("http://h:9494/quack", u.httpUri().toString());
         QuackUri u2 = QuackUri.parse("jdbc:quack://h:9494?tls=true");
         assertEquals("https://h:9494/quack", u2.httpUri().toString());
+    }
+
+    @Test
+    void tlsAcceptsExplicitSpellingsFromBothSourcesAndAliases() {
+        for (String key : new String[]{"tls", "useEncryption"}) {
+            for (boolean enabled : new boolean[]{true, false}) {
+                String[] values = enabled ? new String[]{"true", "1", "yes", "on", " TrUe ", "YES"}
+                        : new String[]{"false", "0", "no", "off", " FaLsE ", "OFF", "", " \t "};
+                for (String value : values) {
+                    for (QuackUri uri : new QuackUri[]{QuackUri.parse("jdbc:quack://h?" + key + "="
+                            + URLEncoder.encode(value, StandardCharsets.UTF_8)),
+                            QuackUri.parse("jdbc:quack://h", propsOf(key, value))}) {
+                        assertEquals(enabled, uri.tls(), key + "=" + value);
+                        assertEquals(enabled ? "https" : "http", uri.httpUri().getScheme());
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    void tlsRejectsUnknownNonblankValuesRatherThanSelectingPlaintext() {
+        for (String key : new String[]{"tls", "useEncryption"}) {
+            for (String value : new String[]{"treu", "tru", "2", "-1", "yesplease", "sensitive-value"}) {
+                for (boolean inUrl : new boolean[]{true, false}) {
+                    QuackException error = assertThrows(QuackException.class, () -> {
+                        if (inUrl) QuackUri.parse("jdbc:quack://h?" + key + "=" + value);
+                        else QuackUri.parse("jdbc:quack://h", propsOf(key, value));
+                    });
+                    assertEquals("Quack JDBC property " + key
+                            + " must be true/false, 1/0, yes/no, or on/off", error.getMessage());
+                    assertNull(error.getCause());
+                }
+            }
+        }
+    }
+
+    @Test
+    void tlsPreservesCanonicalKeyAndUrlPrecedence() {
+        assertTrue(QuackUri.parse("jdbc:quack://h?tls=true", propsOf("tls", "false")).tls());
+        assertFalse(QuackUri.parse("jdbc:quack://h?tls=false", propsOf("tls", "true")).tls());
+        assertTrue(QuackUri.parse("jdbc:quack://h?useEncryption=false", propsOf("tls", "true")).tls());
+        assertFalse(QuackUri.parse("jdbc:quack://h?tls=false&useEncryption=true").tls());
+        assertFalse(QuackUri.parse("jdbc:quack://h?tls=&useEncryption=true").tls());
+        assertThrows(QuackException.class,
+                () -> QuackUri.parse("jdbc:quack://h?tls=treu", propsOf("tls", "true")));
     }
 
     @Test
