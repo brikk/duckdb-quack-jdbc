@@ -31,15 +31,18 @@ import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
 public class QuackPreparedStatement extends QuackStatement implements PreparedStatement {
 
+    private static final Object UNBOUND = new Object();
+
     private final QuackConnection connection;
     private final String sql;
     private final List<Integer> markerPositions;
-    private final List<Object> parameters = new ArrayList<>();
+    private final List<Object> parameters;
     private final List<List<Object>> paramBatch = new ArrayList<>();
 
     public QuackPreparedStatement(QuackConnection connection, String sql) {
@@ -47,20 +50,30 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
         this.connection = connection;
         this.sql = sql;
         this.markerPositions = parameterPositions(sql);
+        this.parameters = new ArrayList<>(Collections.nCopies(markerPositions.size(), UNBOUND));
     }
 
     private void setParam(int index, Object value) throws SQLException {
-        if (index < 1) {
-            throw new SQLException("Parameter index must be >= 1: " + index);
-        }
-        while (parameters.size() < index) parameters.add(null);
+        checkParameterIndex(index);
         parameters.set(index - 1, value);
     }
 
-    private String interpolate(List<Object> params) throws SQLException {
-        if (params.size() < markerPositions.size()) {
-            throw new SQLException("Not enough parameters bound for SQL: " + sql);
+    private void checkParameterIndex(int index) throws SQLException {
+        checkOpen();
+        if (index < 1 || index > markerPositions.size()) {
+            throw new SQLException("Parameter index out of range: " + index + " (count: " + markerPositions.size() + ")");
         }
+    }
+
+    private void validateParameters(List<Object> params) throws SQLException {
+        checkOpen();
+        for (int i = 0; i < params.size(); i++) {
+            if (params.get(i) == UNBOUND) throw new SQLException("Parameter " + (i + 1) + " is not bound");
+        }
+    }
+
+    private String interpolate(List<Object> params) throws SQLException {
+        validateParameters(params);
         StringBuilder out = new StringBuilder(sql.length() + 32);
         int start = 0;
         for (int p = 0; p < markerPositions.size(); p++) {
@@ -84,7 +97,8 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
 
     private String interpolateWithDefaults() throws SQLException {
         List<Object> padded = new ArrayList<>(parameters);
-        while (padded.size() < markerPositions.size()) padded.add(null);
+        // Metadata probes must not turn missing execution bindings into bound NULLs.
+        padded.replaceAll(value -> value == UNBOUND ? null : value);
         return interpolate(padded);
     }
 
@@ -201,6 +215,7 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
 
     @Override
     public void addBatch() throws SQLException {
+        validateParameters(parameters);
         // Snapshot the current parameter binding for later replay.
         paramBatch.add(new ArrayList<>(parameters));
     }
@@ -234,7 +249,7 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
 
     @Override
     public void clearParameters() {
-        parameters.clear();
+        Collections.fill(parameters, UNBOUND);
     }
 
     @Override
@@ -306,32 +321,41 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
     @Override public void setBlob(int i, InputStream s) throws SQLException { throw notSupported("Blob"); }
     @Override public void setSQLXML(int i, SQLXML x) throws SQLException { throw notSupported("SQLXML"); }
     @Override public void setRef(int i, Ref x) throws SQLException { throw notSupported("Ref"); }
-    @Override public void setArray(int i, Array x) throws SQLException { setParam(i, x == null ? null : x.getArray()); }
+    @Override public void setArray(int i, Array x) throws SQLException {
+        checkParameterIndex(i);
+        setParam(i, x == null ? null : x.getArray());
+    }
     @Override public void setAsciiStream(int i, InputStream s, int len) throws SQLException { setAsciiStream(i, s, (long) len); }
     @Override public void setAsciiStream(int i, InputStream s, long len) throws SQLException {
+        checkParameterIndex(i);
         try { setParam(i, s == null ? null : new String(s.readNBytes((int) len), StandardCharsets.US_ASCII)); }
         catch (java.io.IOException e) { throw new SQLException(e); }
     }
     @Override public void setAsciiStream(int i, InputStream s) throws SQLException {
+        checkParameterIndex(i);
         try { setParam(i, s == null ? null : new String(s.readAllBytes(), StandardCharsets.US_ASCII)); }
         catch (java.io.IOException e) { throw new SQLException(e); }
     }
     @Override public void setUnicodeStream(int i, InputStream s, int len) throws SQLException { throw notSupported("UnicodeStream"); }
     @Override public void setBinaryStream(int i, InputStream s, int len) throws SQLException { setBinaryStream(i, s, (long) len); }
     @Override public void setBinaryStream(int i, InputStream s, long len) throws SQLException {
+        checkParameterIndex(i);
         try { setParam(i, s == null ? null : s.readNBytes((int) len)); }
         catch (java.io.IOException e) { throw new SQLException(e); }
     }
     @Override public void setBinaryStream(int i, InputStream s) throws SQLException {
+        checkParameterIndex(i);
         try { setParam(i, s == null ? null : s.readAllBytes()); }
         catch (java.io.IOException e) { throw new SQLException(e); }
     }
     @Override public void setCharacterStream(int i, Reader r, int len) throws SQLException { setCharacterStream(i, r, (long) len); }
     @Override public void setCharacterStream(int i, Reader r, long len) throws SQLException {
+        checkParameterIndex(i);
         try { setParam(i, r == null ? null : readReader(r, (int) len)); }
         catch (java.io.IOException e) { throw new SQLException(e); }
     }
     @Override public void setCharacterStream(int i, Reader r) throws SQLException {
+        checkParameterIndex(i);
         try { setParam(i, r == null ? null : readReader(r, -1)); }
         catch (java.io.IOException e) { throw new SQLException(e); }
     }

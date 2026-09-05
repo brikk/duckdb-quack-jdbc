@@ -185,6 +185,55 @@ public class JdbcCoverageIntegrationTest {
     // ---- Statement / PreparedStatement ----
 
     @Test
+    void incompleteBindingsDoNotExecuteAndExplicitNullsRemainDistinct() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            s.execute("CREATE TEMP TABLE binding_validation (a INTEGER, b INTEGER)");
+            try (PreparedStatement p = c.prepareStatement("INSERT INTO binding_validation VALUES (?, ?)")) {
+                p.setInt(2, 20);
+                assertThrows(SQLException.class, p::executeUpdate);
+                assertThrows(SQLException.class, p::addBatch);
+                try (ResultSet rs = s.executeQuery("SELECT count(*) FROM binding_validation")) {
+                    assertTrue(rs.next());
+                    assertEquals(0, rs.getInt(1));
+                }
+                p.setNull(1, Types.INTEGER);
+                assertEquals(1, p.executeUpdate());
+                p.setInt(1, 1);
+                p.addBatch();
+                p.clearParameters();
+                p.setInt(2, 30);
+                assertThrows(SQLException.class, p::addBatch);
+                p.setObject(1, null);
+                p.addBatch();
+                p.clearParameters();
+                assertArrayEquals(new int[]{1, 1}, p.executeBatch());
+                assertThrows(SQLException.class, p::executeUpdate);
+            }
+            try (PreparedStatement p = c.prepareStatement("SELECT ?::INTEGER AS a, ?::INTEGER AS b")) {
+                p.setInt(2, 2);
+                assertEquals(2, p.getMetaData().getColumnCount());
+                assertThrows(SQLException.class, p::executeQuery);
+                p.setNull(1, Types.INTEGER);
+                try (ResultSet rs = p.executeQuery()) {
+                    assertTrue(rs.next());
+                    assertNull(rs.getObject(1));
+                    assertTrue(rs.wasNull());
+                    assertEquals(2, rs.getInt(2));
+                    assertFalse(rs.wasNull());
+                }
+            }
+            try (ResultSet rs = s.executeQuery("SELECT a, b FROM binding_validation ORDER BY b, a NULLS FIRST")) {
+                for (Integer[] row : new Integer[][]{{null, 20}, {1, 20}, {null, 30}}) {
+                    assertTrue(rs.next());
+                    assertEquals(row[0], rs.getObject(1));
+                    assertEquals(row[1], rs.getObject(2));
+                }
+                assertFalse(rs.next());
+            }
+        }
+    }
+
+    @Test
     void executeDrainLoopTerminatesAfterInsert() throws Exception {
         // Replicates the JDBC multi-result drain loop that DataGrip / DBeaver
         // run after Statement.execute(...): iterate until

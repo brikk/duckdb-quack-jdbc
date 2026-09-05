@@ -343,6 +343,12 @@ GizmoData roadmap.
   lexing (such as nonbreaking spaces) is rejected to avoid ambiguous marker
   boundaries. Use ASCII whitespace in SQL; parameter values may contain
   those Unicode characters.
+- Every real prepared-statement marker must be bound before execution or
+  `addBatch()`. Bind SQL NULL explicitly with `setNull` or a supported null
+  setter value; an unbound marker is not NULL. Indices are one-based and must
+  not exceed the marker count. `clearParameters()` removes current bindings
+  without changing queued batches. `getMetaData()` may probe missing values
+  as NULL but does not bind them for subsequent execution.
 - The `APPEND_REQUEST` fast-path encodes scalar and nested
   (STRUCT / LIST / ARRAY / MAP) DataChunks, so `QuackConnection.session()
   .appendChunk(...)` can bulk-load nested data. Appends through a JDBC

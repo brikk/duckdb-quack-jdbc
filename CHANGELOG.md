@@ -61,6 +61,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   token-source, and extra-header validation diagnostics no longer expose raw
   configuration values or input-bearing parser causes. Authentication accessors
   and downstream server/query error messages retain their existing behavior.
+- **B19:** Prepared statements distinguish unbound parameters from explicitly
+  bound NULLs, reject invalid setter/metadata indices, and validate complete
+  bindings before execution or batch submission. Metadata probes do not bind
+  missing values; clearing parameters preserves queued batch snapshots.
 
 Review IDs and verification details are recorded in [CODE_REVIEW.md](CODE_REVIEW.md).
 Other findings remain open; the review records current resolution status.

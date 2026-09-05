@@ -20,14 +20,20 @@ public final class QuackParameterMetaData implements ParameterMetaData {
     }
 
     @Override public int getParameterCount() { return parameterCount; }
-    @Override public int isNullable(int param) { return parameterNullableUnknown; }
-    @Override public boolean isSigned(int param) { return false; }
-    @Override public int getPrecision(int param) { return 0; }
-    @Override public int getScale(int param) { return 0; }
-    @Override public int getParameterType(int param) { return Types.OTHER; }
-    @Override public String getParameterTypeName(int param) { return "OTHER"; }
-    @Override public String getParameterClassName(int param) { return Object.class.getName(); }
-    @Override public int getParameterMode(int param) { return parameterModeIn; }
+    @Override public int isNullable(int param) throws SQLException { checkIndex(param); return parameterNullableUnknown; }
+    @Override public boolean isSigned(int param) throws SQLException { checkIndex(param); return false; }
+    @Override public int getPrecision(int param) throws SQLException { checkIndex(param); return 0; }
+    @Override public int getScale(int param) throws SQLException { checkIndex(param); return 0; }
+    @Override public int getParameterType(int param) throws SQLException { checkIndex(param); return Types.OTHER; }
+    @Override public String getParameterTypeName(int param) throws SQLException { checkIndex(param); return "OTHER"; }
+    @Override public String getParameterClassName(int param) throws SQLException { checkIndex(param); return Object.class.getName(); }
+    @Override public int getParameterMode(int param) throws SQLException { checkIndex(param); return parameterModeIn; }
+
+    private void checkIndex(int param) throws SQLException {
+        if (param < 1 || param > parameterCount) {
+            throw new SQLException("Parameter index out of range: " + param + " (count: " + parameterCount + ")");
+        }
+    }
 
     @Override public <T> T unwrap(Class<T> iface) throws SQLException {
         if (iface.isInstance(this)) return iface.cast(this);
