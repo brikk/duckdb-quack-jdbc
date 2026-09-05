@@ -289,6 +289,10 @@ GizmoData roadmap.
     LIST/ARRAY/STRUCT/MAP remain plain `java.util.List` / `java.util.Map`
     values rather than being recursively wrapped as `java.sql.Array` /
     `java.sql.Struct` the way duckdb-jdbc does.
+- Unnamed STRUCTs (tuples such as `row(1, 2)`) preserve attributes by position.
+  The wire layer and nested values use `java.util.List`; named STRUCTs retain
+  their field-name maps. APPEND accepts exact-length lists for unnamed STRUCTs
+  and maps for named STRUCTs. Top-level tuples still return `java.sql.Struct`.
 - Prepared-statement parameters use client-side literal substitution.
   Native parameter binding will follow once the Quack protocol surfaces
   bind parameters (`PREPARE_REQUEST` currently carries only the SQL text).

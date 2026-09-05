@@ -109,7 +109,8 @@ public final class JdbcTypeMap {
         return type.typeInfo().filter(i -> i instanceof ExtraTypeInfo.StructInfo)
                 .map(i -> (ExtraTypeInfo.StructInfo) i)
                 .map(s -> s.childTypes().stream()
-                        .map(ct -> quoteIdentifier(ct.name()) + " " + typeName(ct.type(), true))
+                        .map(ct -> (ct.name().isEmpty() ? "" : quoteIdentifier(ct.name()) + " ")
+                                + typeName(ct.type(), true))
                         .collect(Collectors.joining(", ", "STRUCT(", ")")))
                 .orElse("STRUCT");
     }

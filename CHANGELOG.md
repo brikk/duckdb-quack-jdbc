@@ -42,6 +42,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   TIMESTAMPTZ reads preserve their instant. Custom timezone rules, DST
   leniency, epoch-anchored times, and SQL's proleptic Gregorian fields are
   respected without mutating caller objects. Null Calendar behavior is unchanged.
+- **B7:** Unnamed STRUCTs preserve every attribute by position, including nested
+  tuples and compressed/streamed results. The wire layer uses exact-length lists
+  for tuple reads and APPEND inputs; named STRUCTs retain maps. Top-level JDBC
+  tuples return `Struct` with native-compatible type names. Missing or extra
+  STRUCT child vectors are rejected instead of exposing incomplete values.
 
 Review IDs and verification details are recorded in [CODE_REVIEW.md](CODE_REVIEW.md).
 Other findings remain open; the review records current resolution status.

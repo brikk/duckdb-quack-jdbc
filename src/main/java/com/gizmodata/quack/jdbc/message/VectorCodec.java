@@ -344,6 +344,7 @@ public final class VectorCodec {
             }
             case STRUCT -> {
                 List<ChildType> children = PhysicalTypeUtil.getStructChildren(type);
+                boolean positional = children.stream().anyMatch(child -> child.name().isEmpty());
                 List<DecodedVector> childVectors = reader.readRequiredField(103,
                         () -> reader.readList(i -> {
                             if (i >= children.size()) {
@@ -352,17 +353,27 @@ public final class VectorCodec {
                             }
                             return decodeVector(reader, children.get(i).type(), count);
                         }));
+                if (childVectors.size() != children.size()) {
+                    throw new QuackProtocolException("STRUCT child vector count does not match type metadata");
+                }
                 Object[] values = new Object[count];
                 for (int row = 0; row < count; row++) {
                     if (!Validity.isValid(validity, row)) {
                         values[row] = null;
                         continue;
                     }
-                    Map<String, Object> rowMap = new LinkedHashMap<>();
-                    for (int c = 0; c < children.size(); c++) {
-                        rowMap.put(children.get(c).name(), childVectors.get(c).getObject(row));
+                    if (positional) {
+                        // Tuple fields share an empty name; a map would discard their positions.
+                        List<Object> attributes = new ArrayList<>(children.size());
+                        for (DecodedVector child : childVectors) attributes.add(child.getObject(row));
+                        values[row] = attributes;
+                    } else {
+                        Map<String, Object> rowMap = new LinkedHashMap<>();
+                        for (int c = 0; c < children.size(); c++) {
+                            rowMap.put(children.get(c).name(), childVectors.get(c).getObject(row));
+                        }
+                        values[row] = rowMap;
                     }
-                    values[row] = rowMap;
                 }
                 yield new DecodedVector.ObjectVec(type, values);
             }
@@ -755,15 +766,24 @@ public final class VectorCodec {
     private static void encodeStructChildren(BinaryWriter writer, LogicalType type,
                                              DecodedVector vector, int count) {
         List<ChildType> children = PhysicalTypeUtil.getStructChildren(type);
+        boolean positional = children.stream().anyMatch(child -> child.name().isEmpty());
         writer.writeField(103, () -> writer.writeList(children, (child, ci) -> {
             Object[] childValues = new Object[count];
             for (int r = 0; r < count; r++) {
                 Object row = vector.isNull(r) ? null : vector.getObject(r);
-                if (row != null && !(row instanceof Map<?, ?>)) {
+                if (row == null) continue;
+                if (positional) {
+                    if (!(row instanceof List<?> attributes) || attributes.size() != children.size()) {
+                        throw new QuackProtocolException("Unnamed STRUCT row " + r + " must be a list with exactly "
+                                + children.size() + " attributes");
+                    }
+                    childValues[r] = attributes.get(ci);
+                } else if (row instanceof Map<?, ?> values) {
+                    childValues[r] = values.get(child.name());
+                } else {
                     throw new QuackProtocolException("Expected a map value for STRUCT row " + r
                             + ", got " + row.getClass().getName());
                 }
-                childValues[r] = (row instanceof Map<?, ?> m) ? m.get(child.name()) : null;
             }
             encodeVector(writer, child.type(), new DecodedVector.ObjectVec(child.type(), childValues));
         }));

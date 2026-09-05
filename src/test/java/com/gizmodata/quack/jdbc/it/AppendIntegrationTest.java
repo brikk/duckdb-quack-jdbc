@@ -5,6 +5,8 @@ import com.gizmodata.quack.jdbc.message.DataChunk;
 import com.gizmodata.quack.jdbc.message.DecodedVector;
 import com.gizmodata.quack.jdbc.message.Validity;
 import com.gizmodata.quack.jdbc.sql.QuackConnection;
+import com.gizmodata.quack.jdbc.type.ChildType;
+import com.gizmodata.quack.jdbc.type.ExtraTypeInfo;
 import com.gizmodata.quack.jdbc.type.LogicalType;
 import com.gizmodata.quack.jdbc.type.LogicalTypeId;
 import org.junit.jupiter.api.AfterAll;
@@ -26,6 +28,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -58,6 +61,32 @@ public class AppendIntegrationTest {
 
     private QuackConnection connect() throws SQLException {
         return (QuackConnection) DriverManager.getConnection(server.jdbcUrl());
+    }
+
+    @Test
+    void appendUnnamedStructsPreservesPositionsAndNulls() throws Exception {
+        LogicalType integer = LogicalType.of(LogicalTypeId.INTEGER);
+        LogicalType tuple = LogicalType.of(LogicalTypeId.STRUCT, new ExtraTypeInfo.StructInfo(
+                List.of(new ChildType("", integer), new ChildType("", integer)), Optional.empty()));
+        LogicalType tuples = LogicalType.of(LogicalTypeId.LIST, new ExtraTypeInfo.ListInfo(tuple, Optional.empty()));
+        try (QuackConnection c = connect(); Statement s = c.createStatement()) {
+            // DuckDB persists named STRUCTs; APPEND casts the incoming tuple attributes by position.
+            s.execute("CREATE TEMP TABLE append_tuples (id INTEGER, t STRUCT(x INTEGER, y INTEGER), a STRUCT(x INTEGER, y INTEGER)[])");
+            c.session().appendChunk("main", "append_tuples", new DataChunk(3, List.of(integer, tuple, tuples), List.of(
+                    new DecodedVector.IntVec(integer, new int[]{0, 1, 2}, null),
+                    new DecodedVector.ObjectVec(tuple, new Object[]{List.of(1, 2), null, Arrays.asList(null, 3)}),
+                    new DecodedVector.ObjectVec(tuples, new Object[]{Arrays.asList(List.of(4, 5), null), List.of(), null}))));
+            // Inspect scalar positions on the server so the encoder and decoder cannot hide a shared mistake.
+            try (ResultSet rs = s.executeQuery("SELECT t.x, t.y, t IS NULL, a[1].x, a[1].y, len(a) FROM append_tuples ORDER BY id")) {
+                Object[][] expected = {{1, 2, false, 4, 5, 2L}, {null, null, true, null, null, 0L},
+                        {null, 3, false, null, null, null}};
+                for (Object[] row : expected) {
+                    assertTrue(rs.next());
+                    for (int i = 0; i < row.length; i++) assertEquals(row[i], rs.getObject(i + 1));
+                }
+                assertFalse(rs.next());
+            }
+        }
     }
 
     @Test

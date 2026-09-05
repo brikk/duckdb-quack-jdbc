@@ -2,7 +2,7 @@
 
 Reviewed 2026-09-05 at `/home/jayson/DEV/brikk/fork-quack-jdbc`, version `0.7.0-SNAPSHOT`.
 
-This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Approved implementation passes resolve B1-B6 and B8-B11; resolution notes and V5-V8 record the scope and verification. Earlier fixes were committed as af771d2, followed by B8 as 5f366ac; B11 is a subsequent separate fix. Existing changes to `CLAUDE.md` and `DUCKDB_COMPATIBILITY.md` were preserved.
+This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Approved implementation passes resolve B1-B11; resolution notes and V5-V9 record the scope and verification. Earlier fixes were committed as af771d2, followed by B8 as 5f366ac and B11 as 3104d54; B7 is a subsequent separate fix. Existing changes to `CLAUDE.md` and `DUCKDB_COMPATIBILITY.md` were preserved.
 
 All source references below are relative to the repository root. `sql/`, `message/`, `codec/`, `type/`, and `transport/` abbreviate directories under `src/main/java/com/gizmodata/quack/jdbc/`. Original finding line numbers refer to the reviewed baseline; subsequent edits may shift them. Keep the original evidence alongside resolution notes.
 
@@ -17,7 +17,7 @@ Use these IDs in requests, changes, tests, and follow-up discussions, for exampl
 | C | C1-C4 | Native-parity observations requiring a compatibility decision before changes |
 | I | I1-I9 | Build, testing, and engineering improvements |
 | S | S1-S8 | Strengths to preserve, not implementation tasks |
-| V | V1-V8 | Verification evidence and limitations, not implementation tasks |
+| V | V1-V9 | Verification evidence and limitations, not implementation tasks |
 
 IDs are permanent and independent of severity, priority rank, and document order. B1-B40 match the original full report's numbered findings, not the shorter chat summary's numbering. Never renumber or reuse an ID; record resolution under the existing item and append new IDs for new findings. If an item needs separate work units, retain its parent ID and introduce suffixes such as B4a and B4b.
 
@@ -88,6 +88,10 @@ The lower unsigned 64-bit word is converted using longValueExact. This rejects v
 Location: `message/VectorCodec.java:361-365,749-762`; `sql/QuackResultSet.java:262-273`.
 
 DuckDB tuples have empty field names. Storing their values in a map keyed by field name collapses distinct positions. `SELECT row(1,2)` returns JDBC Struct attributes `[2,2]`; a tuple inside a list loses the first attribute altogether. Preserve positional values for unnamed structs in both the wire layer and JDBC wrappers. Confirmed against 1.5.5.
+
+**Resolution (2026-09-05): resolved.** STRUCTs containing unnamed fields use positional lists in the wire layer, including nested values and APPEND inputs. Named STRUCTs retain their shipped map representation. APPEND rejects ambiguous maps and wrong-length lists for tuples; top-level JDBC retrieval wraps positional values as Struct. Tuple type names match native JDBC. Recursive nested JDBC wrapping remains intentionally unsupported. Decoder child counts are checked before materialization so malformed tuples cannot silently lose attributes.
+
+Tests: independent FLAT/CONSTANT/DICTIONARY fixtures, missing/extra child fixtures for named and unnamed STRUCTs, encoder validation and null round-trips, live scalar/list/fixed-array/STRUCT/MAP nesting, typed Struct getters and wasNull, 100,000 streamed tuples across FETCH batches, and native scalar value/type-name parity. DuckDB cannot persist unnamed STRUCT fields directly; the live APPEND test casts positional tuple inputs into named destination STRUCTs and checks scalar field values on the server. See V9.
 
 ### B8. NULL temporal values are converted before checking validity [P1]
 
@@ -256,6 +260,8 @@ SELECT 123456789::BIGNUM returns binary-header garbage containing replacement ch
 Location: `message/VectorCodec.java:335-410`; `codec/BinaryReader.java:115-126,150-165`.
 
 A two-row VARCHAR vector with one encoded element decodes successfully as size one. Missing STRUCT children and invalid LIST offsets throw index errors. ARRAY multiplication is unchecked. Separately, nine 0x80 bytes followed by 0x02 overflow the tenth-byte shift and are accepted as zero by both LEB readers. Enforce cardinalities, child counts, slice bounds, checked arithmetic, and valid final-byte payload/sign-extension bits. Reproduced with independent local byte fixtures.
+
+**Partial follow-up (2026-09-05):** B7 now rejects missing and extra STRUCT child vectors. Remaining vector cardinalities, slice bounds, arithmetic, and LEB128 validation remain open under B32.
 
 ### B33. getUDTs loses filtering and scalar alias base types [P2]
 
@@ -434,6 +440,18 @@ QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn 
 
 Result: BUILD SUCCESS; 213 tests reported, zero failures, zero errors, one existing IPv6 availability skip. All integration suites ran against released DuckDB 1.5.5 with native oracle 1.5.5.0. Java runtime 21.0.2; Java 17 compilation target. Built artifact: `target/quack-jdbc-0.7.0-SNAPSHOT.jar`. No new runtime dependencies or public APIs. Pre-existing CLAUDE.md and DUCKDB_COMPATIBILITY.md changes remain untouched and excluded from the B11 changes.
 
+### V9. B7 tuple preservation verification
+
+Approved follow-up: continue in priority order, committing between fixes. B8 and B11 were already committed at the start of this pass. B7 adds seven regression methods. Initial fixtures and native parity reproduced the original attribute loss before production changes. Independent review found a missing-child validation gap in the new positional path; this was fixed and covered, and re-review found no remaining actionable B7 issues.
+
+Full build on 2026-09-05:
+
+```bash
+QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn --batch-mode --no-transfer-progress -Poracle clean verify
+```
+
+Result: BUILD SUCCESS; 220 tests reported, zero failures, zero errors, one existing IPv6 availability skip. All integration suites ran against released DuckDB 1.5.5 with native oracle 1.5.5.0. Java runtime 21.0.2; Java 17 compilation target. No new runtime dependencies. Pre-existing CLAUDE.md and DUCKDB_COMPATIBILITY.md changes remain untouched and excluded from the B7 commit.
+
 ## Top Five Priorities
 
 This is the original approved implementation order, now completed as recorded under each ID and V5. It is retained for traceability, not presented as five outstanding tasks. The ranking prioritized security exposure and the risk of silently persisting incorrect data or violating rollback expectations, not ease of implementation. Original complexity estimates included a complete fix and targeted regression tests; they were not elapsed-time commitments. Low meant localized conversion/validation work, Medium coordinated paths and a boundary-test matrix, and High substantial semantic or API-design risk.
@@ -446,4 +464,4 @@ This is the original approved implementation order, now completed as recorded un
 | 4 | B10 | Select and validate the URL catalog | Low-Medium | Unqualified writes can reach the wrong database. Initialize the server catalog before caching it, handle failed initialization cleanup, and test attached, nonexistent, and quoted catalog names. |
 | 5 | B4 | Preserve exact numeric conversions | Low-Medium | Affects common BIGINT/DECIMAL reads and decimal writes. Remove floating-point and long intermediates for exact values; test large positive/negative integers, scales, and typed BigInteger retrieval. |
 
-These ranks do not change any finding's ID. Approved follow-ups have also resolved B6 and B2+B3 (V6), B8 (V7), and B11 (V8). B7 and B12 remain P1 work, not optional follow-ups. Use I4-I6 to broaden regression coverage, address JDBC execution/lifecycle and deadlines (B13-B22), resolve remaining metadata/value alignment (B23 and C1-C4), and promote verification into CI (I1-I3). Track remaining cleanup and performance work using L1-L6 and I7-I9.
+These ranks do not change any finding's ID. Approved follow-ups have also resolved B6 and B2+B3 (V6), B8 (V7), B11 (V8), and B7 (V9). B12 remains P1 work, not an optional follow-up. Use I4-I6 to broaden regression coverage, address JDBC execution/lifecycle and deadlines (B13-B22), resolve remaining metadata/value alignment (B23 and C1-C4), and promote verification into CI (I1-I3). Track remaining cleanup and performance work using L1-L6 and I7-I9.

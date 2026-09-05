@@ -320,6 +320,9 @@ public final class QuackResultSet extends SkeletalResultSet {
         if (id == LogicalTypeId.STRUCT && v instanceof Map<?, ?> struct) {
             return toStruct(type, struct);
         }
+        if (id == LogicalTypeId.STRUCT && v instanceof List<?> attributes) {
+            return new QuackStruct(JdbcTypeMap.typeName(type), attributes.toArray());
+        }
         return v;
     }
     @Override public Object getObject(String columnLabel) throws SQLException { return getObject(findColumn(columnLabel)); }

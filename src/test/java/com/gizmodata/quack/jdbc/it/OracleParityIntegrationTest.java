@@ -20,6 +20,7 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Struct;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.Instant;
@@ -93,6 +94,24 @@ public class OracleParityIntegrationTest {
         };
         for (String sql : queries) {
             assertColumnTypeParity(sql);
+        }
+    }
+
+    @Test
+    void unnamedStructValuesAndTypeNamesMatchNative() throws Exception {
+        for (String sql : new String[]{"SELECT row(1, 2) AS v", "SELECT row(NULL::INTEGER, 'text') AS v",
+                "SELECT row(NULL::INTEGER, NULL::INTEGER) AS v"}) {
+            try (Statement qs = quack.createStatement(); Statement os = oracle.createStatement();
+                 ResultSet q = qs.executeQuery(sql); ResultSet o = os.executeQuery(sql)) {
+                assertTrue(q.next());
+                assertTrue(o.next());
+                Struct expected = (Struct) o.getObject(1);
+                Struct actual = (Struct) q.getObject(1);
+                assertArrayEquals(expected.getAttributes(), actual.getAttributes(), sql);
+                assertEquals(expected.getSQLTypeName(), actual.getSQLTypeName(), sql);
+                assertEquals(o.getMetaData().getColumnTypeName(1), q.getMetaData().getColumnTypeName(1), sql);
+                assertEquals(o.getMetaData().getColumnType(1), q.getMetaData().getColumnType(1), sql);
+            }
         }
     }
 

@@ -18,10 +18,12 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Struct;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -58,6 +60,23 @@ public class StreamingIntegrationTest {
 
     private QuackConnection connect() throws SQLException {
         return (QuackConnection) DriverManager.getConnection(server.jdbcUrl());
+    }
+
+    @Test
+    void tuplePositionsSurviveFetchBatches() throws Exception {
+        try (QuackConnection c = connect();
+             QuackSession.Cursor cursor = c.session().cursor(
+                     "SELECT row(i, CASE WHEN i % 2 = 0 THEN NULL ELSE -i END) FROM range(100000) t(i)")) {
+            assertTrue(cursor.materializedRowCount() < 100_000);
+            try (ResultSet rs = new QuackResultSet(null, cursor)) {
+                long row = 0;
+                while (rs.next()) {
+                    assertArrayEquals(new Object[]{row, row % 2 == 0 ? null : -row}, ((Struct) rs.getObject(1)).getAttributes());
+                    row++;
+                }
+                assertEquals(100_000, row);
+            }
+        }
     }
 
     @Test

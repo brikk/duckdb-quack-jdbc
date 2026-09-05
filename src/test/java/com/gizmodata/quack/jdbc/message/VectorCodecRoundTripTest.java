@@ -3,6 +3,8 @@ package com.gizmodata.quack.jdbc.message;
 import com.gizmodata.quack.jdbc.QuackProtocolException;
 import com.gizmodata.quack.jdbc.codec.BinaryReader;
 import com.gizmodata.quack.jdbc.codec.BinaryWriter;
+import com.gizmodata.quack.jdbc.type.ChildType;
+import com.gizmodata.quack.jdbc.type.ExtraTypeInfo;
 import com.gizmodata.quack.jdbc.type.LogicalType;
 import com.gizmodata.quack.jdbc.type.LogicalTypeId;
 import org.junit.jupiter.api.Test;
@@ -11,7 +13,10 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -26,6 +31,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the values match — pure unit tests, no Quack server required.
  */
 class VectorCodecRoundTripTest {
+
+    @Test
+    void unnamedStructEncodingPreservesPositionsAndRejectsAmbiguousValues() {
+        LogicalType integer = LogicalType.of(LogicalTypeId.INTEGER);
+        LogicalType tuple = LogicalType.of(LogicalTypeId.STRUCT, new ExtraTypeInfo.StructInfo(
+                List.of(new ChildType("", integer), new ChildType("", integer)), Optional.empty()));
+        Object[] values = {List.of(1, 2), null, Arrays.asList(null, 3), Arrays.asList(null, null)};
+        DataChunk chunk = new DataChunk(values.length, List.of(tuple),
+                List.of(new DecodedVector.ObjectVec(tuple, values)));
+        DataChunk decoded = roundTrip(chunk);
+        for (int row = 0; row < values.length; row++) assertEquals(values[row], decoded.columns().get(0).getObject(row));
+        for (Object invalid : new Object[]{Map.of("", 1), List.of(1), List.of(1, 2, 3), "tuple"}) {
+            assertThrows(QuackProtocolException.class, () -> encodeValue(tuple, invalid));
+        }
+    }
 
     @Test
     void integerVarcharChunkRoundTrips() {

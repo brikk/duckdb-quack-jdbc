@@ -19,6 +19,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -54,6 +55,70 @@ class VectorEncodingDecodeTest {
 
     private static DecodedVector decode(LogicalType type, int count, byte[] object) {
         return VectorCodec.decodeVector(new BinaryReader(object), type, count);
+    }
+
+    @Test
+    void unnamedStructPreservesPositionsInFlatConstantAndDictionaryVectors() {
+        LogicalType tuple = LogicalType.of(LogicalTypeId.STRUCT, new ExtraTypeInfo.StructInfo(
+                List.of(new ChildType("", INT), new ChildType("", INT)), Optional.empty()));
+        for (VectorType encoding : new VectorType[]{VectorType.FLAT, VectorType.CONSTANT, VectorType.DICTIONARY}) {
+            int rows = encoding == VectorType.CONSTANT ? 1 : 3;
+            BinaryWriter w = new BinaryWriter();
+            w.writeObject(obj -> {
+                if (encoding != VectorType.FLAT) {
+                    obj.writeField(90, () -> obj.writeUleb(encoding.wireId()));
+                }
+                if (encoding == VectorType.DICTIONARY) {
+                    obj.writeField(91, () -> obj.writeBlob(le32(2, 0, 1, 2)));
+                    obj.writeField(92, () -> obj.writeUleb(rows));
+                }
+                obj.writeField(100, () -> obj.writeBool(rows > 1));
+                if (rows > 1) obj.writeField(101, () -> obj.writeBlob(le64(5)));
+                obj.writeField(103, () -> {
+                    obj.writeUleb(2);
+                    obj.writeObject(child -> {
+                        child.writeField(100, () -> child.writeBool(rows > 1));
+                        if (rows > 1) child.writeField(101, () -> child.writeBlob(le64(1)));
+                        child.writeField(102, () -> child.writeBlob(rows == 1 ? le32(11) : le32(11, 0, 0)));
+                    });
+                    obj.writeObject(child -> {
+                        child.writeField(100, () -> child.writeBool(false));
+                        child.writeField(102, () -> child.writeBlob(rows == 1 ? le32(22) : le32(22, 0, 33)));
+                    });
+                });
+            });
+            int[] selection = encoding == VectorType.CONSTANT ? new int[]{0, 0, 0, 0}
+                    : encoding == VectorType.DICTIONARY ? new int[]{2, 0, 1, 2} : new int[]{0, 1, 2};
+            Object[] expected = {List.of(11, 22), null, Arrays.asList(null, 33)};
+            BinaryReader reader = new BinaryReader(w.toByteArray());
+            DecodedVector v = VectorCodec.decodeVector(reader, tuple, selection.length);
+            reader.assertEof();
+            for (int i = 0; i < selection.length; i++) {
+                assertEquals(expected[selection[i]], v.getObject(i), encoding + " row " + i);
+            }
+        }
+    }
+
+    @Test
+    void structDecodeRejectsMissingOrExtraChildren() {
+        for (String name : new String[]{"", "a"}) {
+            LogicalType struct = LogicalType.of(LogicalTypeId.STRUCT, new ExtraTypeInfo.StructInfo(
+                    List.of(new ChildType(name, INT), new ChildType(name.isEmpty() ? "" : "b", INT)), Optional.empty()));
+            for (int childCount : new int[]{0, 1, 3}) {
+                BinaryWriter w = new BinaryWriter();
+                w.writeObject(obj -> {
+                    obj.writeField(100, () -> obj.writeBool(false));
+                    obj.writeField(103, () -> {
+                        obj.writeUleb(childCount);
+                        for (int i = 0; i < childCount; i++) obj.writeObject(child -> {
+                            child.writeField(100, () -> child.writeBool(false));
+                            child.writeField(102, () -> child.writeBlob(le32(11)));
+                        });
+                    });
+                });
+                assertThrows(QuackProtocolException.class, () -> decode(struct, 1, w.toByteArray()));
+            }
+        }
     }
 
     @Test

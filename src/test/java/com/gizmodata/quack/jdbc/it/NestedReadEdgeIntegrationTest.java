@@ -52,6 +52,40 @@ public class NestedReadEdgeIntegrationTest {
     }
 
     @Test
+    void unnamedStructsPreservePositionsAndNestedValues() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            try (ResultSet rs = s.executeQuery("SELECT row(1, 2) AS t, row(NULL::INTEGER, 3) AS n, "
+                    + "[row(1, 2), NULL, row(3, 4)] AS a, array_value(row(5, 6), row(7, 8)) AS fixed, "
+                    + "{'tuple': row(9, 10)} AS named, row(row(11, 12), [13, 14]) AS nested, "
+                    + "MAP {1: row(15, 16)} AS m, CASE WHEN false THEN row(1, 2) END AS missing")) {
+                assertTrue(rs.next());
+                assertArrayEquals(new Object[]{1, 2}, ((Struct) rs.getObject("t")).getAttributes());
+                assertArrayEquals(new Object[]{1, 2}, rs.getObject(1, Struct.class).getAttributes());
+                assertArrayEquals(new Object[]{null, 3}, rs.getObject("n", Struct.class).getAttributes());
+                assertArrayEquals(new Object[]{List.of(1, 2), null, List.of(3, 4)}, (Object[]) rs.getArray("a").getArray());
+                assertArrayEquals(new Object[]{List.of(5, 6), List.of(7, 8)}, (Object[]) rs.getArray("fixed").getArray());
+                assertArrayEquals(new Object[]{List.of(9, 10)}, ((Struct) rs.getObject("named")).getAttributes());
+                assertArrayEquals(new Object[]{List.of(11, 12), List.of(13, 14)}, ((Struct) rs.getObject("nested")).getAttributes());
+                assertEquals(Map.of(1, List.of(15, 16)), rs.getObject("m"));
+                assertNull(rs.getObject("missing", Struct.class));
+                assertTrue(rs.wasNull());
+                assertFalse(rs.next());
+            }
+            try (ResultSet rs = s.executeQuery("SELECT v FROM (VALUES (0, row(1, 2)), (1, NULL), "
+                    + "(2, row(NULL::INTEGER, 3)), (3, row(NULL::INTEGER, NULL::INTEGER))) t(i,v) ORDER BY i")) {
+                for (Object[] expected : new Object[][]{{1, 2}, null, {null, 3}, {null, null}}) {
+                    assertTrue(rs.next());
+                    Struct tuple = (Struct) rs.getObject(1);
+                    assertEquals(expected == null, rs.wasNull());
+                    if (expected == null) assertNull(tuple);
+                    else assertArrayEquals(expected, tuple.getAttributes());
+                }
+                assertFalse(rs.next());
+            }
+        }
+    }
+
+    @Test
     void emptyListDecodesToEmptyArray() throws Exception {
         try (Connection c = connect();
              Statement s = c.createStatement();
