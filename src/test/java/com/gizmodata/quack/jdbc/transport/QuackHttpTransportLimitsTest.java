@@ -24,6 +24,8 @@ import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSession;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.net.Authenticator;
 import java.net.ConnectException;
 import java.net.CookieHandler;
@@ -295,6 +297,30 @@ class QuackHttpTransportLimitsTest {
                 + DecodeLimits.DEFAULT.maxResponseBytes()));
         assertEquals(0, client.body.readCalls);
         assertTrue(client.body.closed);
+    }
+
+    @Test
+    void invalidDirectExtraHeadersFailSafelyBeforeSending() {
+        String secret = "B40_SYNTHETIC_HEADER_CREDENTIAL";
+        for (Map<String, String> headers : List.of(Map.of("Authorization", secret + "\u0001suffix"),
+                Map.of("Authorization", secret + "\u007fsuffix"), Map.of("Authorization", secret + "\u0100suffix"),
+                Map.of("Bad/" + secret, "value"), Map.of("Connection", secret))) {
+            StubClient client = new StubClient(MessageCodec.encode(SUCCESS));
+            QuackHttpTransport transport = new QuackHttpTransport(URI.create("https://example.test/quack"),
+                    client, Duration.ofSeconds(2), headers);
+            QuackException error = assertThrows(QuackException.class, () -> transport.send(REQUEST));
+            StringWriter trace = new StringWriter();
+            error.printStackTrace(new PrintWriter(trace));
+            assertFalse(trace.toString().contains(secret));
+            assertNull(error.getCause(), "JDK header exceptions contain the rejected input");
+            assertEquals(0, client.sends);
+        }
+        StubClient client = new StubClient(MessageCodec.encode(SUCCESS));
+        Map<String, String> valid = Map.of("X-!#$%&'*+-.^_`|~", secret + " :/==\tend\u00e9");
+        QuackHttpTransport transport = new QuackHttpTransport(URI.create("https://example.test/quack"),
+                client, Duration.ofSeconds(2), valid);
+        assertEquals(SUCCESS, transport.send(REQUEST));
+        assertEquals(valid.values().iterator().next(), client.request.headers().firstValue(valid.keySet().iterator().next()).orElseThrow());
     }
 
     @Test

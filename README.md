@@ -200,6 +200,15 @@ The token is read at connection time and used for the connection
 handshake, but the token itself does not need to be stored in the data
 source.
 
+`QuackUri.toString()` is a redacted summary: it exposes only port and TLS
+state, not arbitrary string fields or property names/values. Local URL,
+timeout, token-source, and extra-header validation errors omit submitted
+values and do not retain input-bearing parser exceptions. Operational
+accessors still return the original configuration so authentication works.
+Do not log those accessors, raw URLs/Properties, or protocol request objects.
+Server/query errors and diagnostics from directly supplied custom transport
+endpoints are not a general-purpose secret-redaction boundary.
+
 ### Fully custom HTTP transport
 
 Applications that need to customize the HTTP layer can bypass

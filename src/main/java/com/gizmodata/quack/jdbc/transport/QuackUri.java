@@ -26,6 +26,13 @@ public record QuackUri(String host,
 
     public static final String URL_PREFIX = "jdbc:quack:";
 
+    @Override
+    public String toString() {
+        // Arbitrary fields and even property names can contain misplaced credentials.
+        return "QuackUri[host=<redacted>, port=" + port + ", database=<redacted>, tls=" + tls
+                + ", token=<redacted>, properties=<redacted>]";
+    }
+
     /**
      * Prefix for extra-HTTP-header connection properties:
      * {@code httpHeader.<Header-Name>=<value>} sends the header with
@@ -46,23 +53,24 @@ public record QuackUri(String host,
 
     public static QuackUri parse(String url, Properties properties) {
         if (!acceptsUrl(url)) {
-            throw new QuackException("Not a Quack JDBC URL: " + url);
+            throw new QuackException("Not a Quack JDBC URL");
         }
         String stripped = url.substring(URL_PREFIX.length());
         if (!stripped.startsWith("//")) {
-            throw new QuackException("Quack JDBC URL must start with jdbc:quack:// — got " + url);
+            throw new QuackException("Quack JDBC URL must start with jdbc:quack://");
         }
 
         URI parsed;
         try {
             parsed = new URI("http:" + stripped);
         } catch (URISyntaxException e) {
-            throw new QuackException("Invalid Quack JDBC URL: " + url, e);
+            // URISyntaxException retains the complete input, including authentication data.
+            throw new QuackException("Invalid Quack JDBC URL syntax at index " + e.getIndex());
         }
 
         String host = parsed.getHost();
         if (host == null || host.isEmpty()) {
-            throw new QuackException("Quack JDBC URL is missing a host: " + url);
+            throw new QuackException("Quack JDBC URL is missing a valid host");
         }
         int port = parsed.getPort();
         if (port <= 0) {
@@ -101,8 +109,8 @@ public record QuackUri(String host,
         }
         for (String key : params.keySet()) {
             if (key.startsWith(HTTP_HEADER_PREFIX)) {
-                throw new QuackException("Quack JDBC property " + key
-                        + " is only accepted via connection Properties, not the JDBC URL");
+                throw new QuackException("Quack JDBC httpHeader.* properties"
+                        + " are only accepted via connection Properties, not the JDBC URL");
             }
         }
         for (String key : properties.stringPropertyNames()) {
@@ -124,7 +132,7 @@ public record QuackUri(String host,
         try {
             return new URI((tls ? "https" : "http") + "://" + host + ":" + port + QuackConstants.QUACK_ENDPOINT);
         } catch (URISyntaxException e) {
-            throw new QuackException("Failed to build HTTP URI for " + this, e);
+            throw new QuackException("Failed to build Quack HTTP URI");
         }
     }
 
@@ -172,16 +180,14 @@ public record QuackUri(String host,
         String trimmed = name == null ? "" : name.trim();
         if (trimmed.isEmpty() || trimmed.chars().anyMatch(c ->
                 c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == ':')) {
-            throw new QuackException("Invalid HTTP header name in property "
-                    + HTTP_HEADER_PREFIX + name);
+            throw new QuackException("Invalid HTTP header name in httpHeader.* property");
         }
         if (value != null && (value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0)) {
-            throw new QuackException("HTTP header " + trimmed + " value must not contain CR/LF");
+            throw new QuackException("HTTP header value must not contain CR/LF");
         }
-        switch (trimmed.toLowerCase()) {
+        switch (trimmed.toLowerCase(Locale.ROOT)) {
             case "content-type", "accept", "content-length", "host" ->
-                    throw new QuackException("HTTP header " + trimmed
-                            + " is reserved by the Quack protocol");
+                    throw new QuackException("HTTP header is reserved by the Quack protocol");
             default -> { }
         }
     }
@@ -210,12 +216,12 @@ public record QuackUri(String host,
                 duration = Duration.parse(trimmed);
             }
             if (duration.isZero() || duration.isNegative()) {
-                throw new QuackException("Quack JDBC property " + key + " must be positive: " + value);
+                throw new QuackException("Quack JDBC property " + key + " must be positive");
             }
             return duration;
         } catch (DateTimeParseException | NumberFormatException e) {
             throw new QuackException("Quack JDBC property " + key
-                    + " must be a positive number of seconds or ISO-8601 duration: " + value, e);
+                    + " must be a positive number of seconds or ISO-8601 duration");
         }
     }
 

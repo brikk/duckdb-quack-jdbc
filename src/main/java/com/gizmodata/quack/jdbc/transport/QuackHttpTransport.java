@@ -108,7 +108,12 @@ public final class QuackHttpTransport implements QuackTransport {
             // Extra headers first, protocol headers second: Content-Type
             // and Accept must win (QuackUri validation also rejects them).
             for (Map.Entry<String, String> header : extraHeaders.entrySet()) {
-                builder.header(header.getKey(), header.getValue());
+                try {
+                    builder.header(header.getKey(), header.getValue());
+                } catch (IllegalArgumentException e) {
+                    // JDK validation errors include the raw name or credential-bearing value.
+                    throw new QuackException("Invalid or restricted HTTP header in extra headers");
+                }
             }
             HttpRequest httpRequest = builder
                     .header("Content-Type", QuackConstants.DUCKDB_MIME_TYPE)

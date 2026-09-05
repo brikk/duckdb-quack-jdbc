@@ -57,6 +57,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **B39:** Invalid nonblank `tls`/`useEncryption` values now fail before
   transport creation instead of silently selecting plaintext. Explicit boolean
   spellings, blank/missing defaults, and existing property precedence are retained.
+- **B40:** `QuackUri.toString()` is redacted, and local URL, timeout,
+  token-source, and extra-header validation diagnostics no longer expose raw
+  configuration values or input-bearing parser causes. Authentication accessors
+  and downstream server/query error messages retain their existing behavior.
 
 Review IDs and verification details are recorded in [CODE_REVIEW.md](CODE_REVIEW.md).
 Other findings remain open; the review records current resolution status.

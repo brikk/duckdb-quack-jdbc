@@ -2,7 +2,7 @@
 
 Reviewed 2026-09-05 at `/home/jayson/DEV/brikk/fork-quack-jdbc`, version `0.7.0-SNAPSHOT`.
 
-This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Approved implementation passes resolve B1-B12, B32, and B39; resolution notes and V5-V11 record the scope and verification. Earlier fixes were committed as af771d2, followed by B8 as 5f366ac, B11 as 3104d54, B7 as 974f8d3, and B12/B32 as afa7d03. B39 is the next separate fix. Existing changes to `CLAUDE.md` and `DUCKDB_COMPATIBILITY.md` were preserved.
+This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Approved implementation passes resolve B1-B12, B32, B39, and B40; resolution notes and V5-V12 record the scope and verification. Earlier fixes were committed as af771d2, followed by B8 as 5f366ac, B11 as 3104d54, B7 as 974f8d3, B12/B32 as afa7d03, and B39 as 983687d. B40 is the next separate fix. Existing changes to `CLAUDE.md` and `DUCKDB_COMPATIBILITY.md` were preserved.
 
 All source references below are relative to the repository root. `sql/`, `message/`, `codec/`, `type/`, and `transport/` abbreviate directories under `src/main/java/com/gizmodata/quack/jdbc/`. Original finding line numbers refer to the reviewed baseline; subsequent edits may shift them. Keep the original evidence alongside resolution notes.
 
@@ -17,7 +17,7 @@ Use these IDs in requests, changes, tests, and follow-up discussions, for exampl
 | C | C1-C4 | Native-parity observations requiring a compatibility decision before changes |
 | I | I1-I9 | Build, testing, and engineering improvements |
 | S | S1-S8 | Strengths to preserve, not implementation tasks |
-| V | V1-V11 | Verification evidence and limitations, not implementation tasks |
+| V | V1-V12 | Verification evidence and limitations, not implementation tasks |
 
 IDs are permanent and independent of severity, priority rank, and document order. B1-B40 match the original full report's numbered findings, not the shorter chat summary's numbering. Never renumber or reuse an ID; record resolution under the existing item and append new IDs for new findings. If an item needs separate work units, retain its parent ID and introduce suffixes such as B4a and B4b.
 
@@ -317,6 +317,10 @@ Location: `transport/QuackUri.java:18-23,47-63,120-125`.
 
 The record's generated toString includes the resolved token and all properties, including password/header credentials. URL-validation errors include the original URL, so an invalid URL with a token copies it into an exception message. Use redacted diagnostics, including nested URI parsing exceptions, and avoid logging raw properties. Verified using a synthetic placeholder only; no real secrets were inspected or disclosed.
 
+**Resolution (2026-09-05): resolved.** QuackUri.toString redacts all string-bearing fields, including arbitrary property names and credentials misplaced in a host/database, while retaining primitive port/TLS state. Local URL/HTTP-URI, timeout, and header-validation errors use fixed input-free diagnostics and do not retain input-bearing parser causes. Token-source errors identify tokenEnv/tokenFile but omit configured names/paths and discard local I/O, invalid-path, and security causes. A narrow guard around JDK extra-header insertion prevents its raw-value diagnostics from escaping, including when callers bypass QuackUri parsing.
+
+Operational token/property/header/URI accessors, token precedence/trimming, and valid header contents remain unchanged. This is not a global redactor: raw accessors, protocol request objects, arbitrary custom transport endpoint diagnostics, and server/query errors remain sensitive and are documented accordingly. No real credentials or token sources were used in tests; synthetic file fixtures and controlled child-JVM environments cover source resolution. See V12.
+
 ## Lower-Priority Issues And Tradeoffs
 
 - **L1. Cursor position and closed-state checks.** `sql/QuackResultSet.java:74-78,94-95`: getRow returns the last row number after exhaustion instead of zero. Confirmed on a one-row result. Closed-state checks are also inconsistent across simple getters.
@@ -384,7 +388,7 @@ Probe artifacts are under `/tmp/opencode/quack-statement-audit/`, `/tmp/opencode
 
 ### V3. Verification limits
 
-The original review did not execute publication workflows or contact production servers, and no DBeaver UI compatibility certification is implied. V1-V2 describe that review. V5-V10 separately record approved implementation passes; they do not constitute verification of every remaining open finding. The later user-requested push of af771d2 triggered the repository's normal CI and snapshot workflows.
+The original review did not execute publication workflows or contact production servers, and no DBeaver UI compatibility certification is implied. V1-V2 describe that review. V5-V12 separately record approved implementation passes; they do not constitute verification of every remaining open finding. User-requested pushes trigger the repository's normal CI and snapshot workflows.
 
 ### V4. Workspace preservation
 
@@ -485,6 +489,19 @@ QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn 
 
 Result: BUILD SUCCESS; 283 tests, zero failures, zero errors, the same two networking-environment skips as V10. All integration suites ran on DuckDB 1.5.5 with native oracle 1.5.5.0; Java 21.0.2 runtime and Java 17 compilation target. No live TLS endpoint was required: tests assert the selected HTTP scheme and rejection before any transport can be created. B40 diagnostics remain separate work.
 
+### V12. B40 credential-safe diagnostic verification
+
+B40 adds nine regression methods. Before their corresponding fixes, seven URI/header methods and two token-source methods reproduced unsafe diagnostics. Tests inspect full rendered stack traces, causes, and suppressed exceptions, not just outer messages. They also verify unchanged authentication accessors, valid URI/header values, source precedence, JDBC wrapping, and preservation of downstream transport details. Independent review found no actionable B40 issues within the documented local-configuration boundary. SecurityException catches were inspected, not exercised by installing a SecurityManager.
+
+Full builds on 2026-09-05:
+
+```bash
+QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb JAVA_HOME=/home/jayson/.local/share/mise/installs/java/17.0.2 mvn --batch-mode --no-transfer-progress -Poracle clean verify
+QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn --batch-mode --no-transfer-progress -Poracle clean verify
+```
+
+Both builds: BUILD SUCCESS; 292 tests, zero failures, zero errors, the same two networking-environment skips as V10. All integration suites ran on DuckDB 1.5.5 with native oracle 1.5.5.0. Actual runtimes: Java 17.0.2 and Java 21.0.2, both targeting Java 17. No runtime dependencies added. The pre-existing CLAUDE.md and DUCKDB_COMPATIBILITY.md changes remain untouched and excluded from this pass.
+
 ## Top Five Priorities
 
 This is the original approved implementation order, now completed as recorded under each ID and V5. It is retained for traceability, not presented as five outstanding tasks. The ranking prioritized security exposure and the risk of silently persisting incorrect data or violating rollback expectations, not ease of implementation. Original complexity estimates included a complete fix and targeted regression tests; they were not elapsed-time commitments. Low meant localized conversion/validation work, Medium coordinated paths and a boundary-test matrix, and High substantial semantic or API-design risk.
@@ -497,4 +514,4 @@ This is the original approved implementation order, now completed as recorded un
 | 4 | B10 | Select and validate the URL catalog | Low-Medium | Unqualified writes can reach the wrong database. Initialize the server catalog before caching it, handle failed initialization cleanup, and test attached, nonexistent, and quoted catalog names. |
 | 5 | B4 | Preserve exact numeric conversions | Low-Medium | Affects common BIGINT/DECIMAL reads and decimal writes. Remove floating-point and long intermediates for exact values; test large positive/negative integers, scales, and typed BigInteger retrieval. |
 
-These ranks do not change any finding's ID. Approved follow-ups have also resolved B6 and B2+B3 (V6), B8 (V7), B11 (V8), B7 (V9), B12/B32 (V10), and B39 (V11). All original P1 findings are resolved. The next agreed priority is B40 (redacted diagnostics), then B19+B18 (bindings and batch failure counts). Use I4-I6 alongside fixes, address remaining value corruption and JDBC execution/lifecycle/deadlines, and promote verification into CI (I1-I3). C items still require compatibility decisions; cleanup and performance remain tracked by L1-L6 and I7-I9.
+These ranks do not change any finding's ID. Approved follow-ups have also resolved B6 and B2+B3 (V6), B8 (V7), B11 (V8), B7 (V9), B12/B32 (V10), B39 (V11), and B40 (V12). All original P1 findings are resolved. The next agreed priorities are B19+B18 (bindings and batch failure counts). Use I4-I6 alongside fixes, address remaining value corruption and JDBC execution/lifecycle/deadlines, and promote verification into CI (I1-I3). C items still require compatibility decisions; cleanup and performance remain tracked by L1-L6 and I7-I9.

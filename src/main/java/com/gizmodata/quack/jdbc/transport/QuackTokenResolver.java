@@ -5,6 +5,7 @@ import com.gizmodata.quack.jdbc.QuackException;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
@@ -44,9 +45,15 @@ final class QuackTokenResolver {
         if (name.isEmpty()) {
             return Optional.empty();
         }
-        String value = System.getenv(name.get());
+        String value;
+        try {
+            value = System.getenv(name.get());
+        } catch (SecurityException ignored) {
+            // Source-access exceptions can contain secret names or paths; do not retain them.
+            throw new QuackException("Failed to read Quack tokenEnv environment variable");
+        }
         return Optional.of(nonBlank(value).orElseThrow(
-                () -> new QuackException("Quack token environment variable is unset or empty: " + name.get())));
+                () -> new QuackException("Quack tokenEnv environment variable is unset or empty")));
     }
 
     private static Optional<String> resolveFromFile(String tokenFile) {
@@ -54,13 +61,14 @@ final class QuackTokenResolver {
         if (file.isEmpty()) {
             return Optional.empty();
         }
+        String value;
         try {
-            String value = Files.readString(Path.of(file.get()), StandardCharsets.UTF_8);
-            return Optional.of(nonBlank(value).orElseThrow(
-                    () -> new QuackException("Quack token file is empty: " + file.get())));
-        } catch (IOException e) {
-            throw new QuackException("Failed to read Quack token file: " + file.get(), e);
+            value = Files.readString(Path.of(file.get()), StandardCharsets.UTF_8);
+        } catch (IOException | InvalidPathException | SecurityException ignored) {
+            throw new QuackException("Failed to read Quack tokenFile");
         }
+        return Optional.of(nonBlank(value).orElseThrow(
+                () -> new QuackException("Quack tokenFile is empty")));
     }
 
     private static Optional<String> nonBlank(String value) {
