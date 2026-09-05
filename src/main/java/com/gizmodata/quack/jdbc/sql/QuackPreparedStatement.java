@@ -30,6 +30,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Collections;
 import java.util.List;
@@ -233,14 +234,15 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
 
     @Override
     public int[] executeBatch() throws SQLException {
+        checkOpen();
         int[] counts = new int[paramBatch.size()];
         for (int i = 0; i < paramBatch.size(); i++) {
             try {
                 counts[i] = executeUpdate(interpolate(paramBatch.get(i)));
             } catch (SQLException e) {
-                counts[i] = java.sql.Statement.EXECUTE_FAILED;
                 paramBatch.clear();
-                throw new java.sql.BatchUpdateException(e.getMessage(), counts, e);
+                throw new java.sql.BatchUpdateException(e.getMessage(), e.getSQLState(), e.getErrorCode(),
+                        Arrays.copyOf(counts, i), e);
             }
         }
         paramBatch.clear();

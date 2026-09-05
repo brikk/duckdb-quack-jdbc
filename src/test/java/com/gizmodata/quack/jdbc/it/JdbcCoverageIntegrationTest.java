@@ -14,6 +14,7 @@ import org.junit.jupiter.api.condition.EnabledIf;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.sql.Array;
+import java.sql.BatchUpdateException;
 import java.sql.Blob;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -27,6 +28,7 @@ import java.sql.Struct;
 import java.sql.Types;
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -183,6 +185,61 @@ public class JdbcCoverageIntegrationTest {
     }
 
     // ---- Statement / PreparedStatement ----
+
+    @Test
+    void batchFailuresReportExecutedPrefixWithoutRunningLaterCommands() throws Exception {
+        for (boolean prepared : new boolean[]{false, true}) {
+            for (boolean autoCommit : new boolean[]{false, true}) {
+                for (int failAt = 0; failAt < 3; failAt++) {
+                    try (Connection c = connect(); Statement s = c.createStatement()) {
+                        s.execute("CREATE TEMP TABLE batch_failure_counts (id INTEGER PRIMARY KEY)");
+                        s.executeUpdate("INSERT INTO batch_failure_counts VALUES (99)");
+                        c.setAutoCommit(autoCommit);
+                        try (Statement batch = prepared ? c.prepareStatement(
+                                "INSERT INTO batch_failure_counts SELECT ? WHERE ?") : c.createStatement()) {
+                            for (int i = 0; i < 3; i++) {
+                                int value = i == failAt ? 99 : i + 1;
+                                boolean include = i != 0 || i == failAt;
+                                if (batch instanceof PreparedStatement p) {
+                                    p.setInt(1, value);
+                                    p.setBoolean(2, include);
+                                    p.addBatch();
+                                } else {
+                                    batch.addBatch("INSERT INTO batch_failure_counts SELECT " + value + " WHERE " + include);
+                                }
+                            }
+                            BatchUpdateException error = assertThrows(BatchUpdateException.class, batch::executeBatch);
+                            assertArrayEquals(Arrays.copyOf(new int[]{0, 1, 1}, failAt), error.getUpdateCounts());
+                            assertTrue(error.getCause() instanceof SQLException);
+                            assertTrue(error.getMessage().contains("Duplicate key"), error.getMessage());
+                            assertArrayEquals(new int[0], batch.executeBatch());
+                            if (!autoCommit) {
+                                c.rollback();
+                                c.setAutoCommit(true);
+                            }
+                            try (ResultSet rs = s.executeQuery("SELECT id FROM batch_failure_counts ORDER BY id")) {
+                                if (autoCommit && failAt == 2) {
+                                    assertTrue(rs.next());
+                                    assertEquals(2, rs.getInt(1));
+                                }
+                                assertTrue(rs.next());
+                                assertEquals(99, rs.getInt(1));
+                                assertFalse(rs.next(), "unattempted commands must not write rows");
+                            }
+                            if (batch instanceof PreparedStatement p) {
+                                p.setInt(1, 7);
+                                p.setBoolean(2, true);
+                                p.addBatch();
+                            } else {
+                                batch.addBatch("INSERT INTO batch_failure_counts VALUES (7)");
+                            }
+                            assertArrayEquals(new int[]{1}, batch.executeBatch());
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     @Test
     void incompleteBindingsDoNotExecuteAndExplicitNullsRemainDistinct() throws Exception {

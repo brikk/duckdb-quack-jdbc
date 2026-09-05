@@ -349,6 +349,12 @@ GizmoData roadmap.
   not exceed the marker count. `clearParameters()` removes current bindings
   without changing queued batches. `getMetaData()` may probe missing values
   as NULL but does not bind them for subsequent execution.
+- Statement and prepared-statement batches stop at the first SQL error.
+  `BatchUpdateException.getUpdateCounts()` contains only the successful
+  execution prefix, including genuine zero-row updates; the failed command
+  and unattempted suffix are absent. The submitted batch is cleared after
+  success or a SQL execution failure. Counts do not imply commitment: manual
+  transactions still require commit or rollback.
 - The `APPEND_REQUEST` fast-path encodes scalar and nested
   (STRUCT / LIST / ARRAY / MAP) DataChunks, so `QuackConnection.session()
   .appendChunk(...)` can bulk-load nested data. Appends through a JDBC

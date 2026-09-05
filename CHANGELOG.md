@@ -65,6 +65,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   bound NULLs, reject invalid setter/metadata indices, and validate complete
   bindings before execution or batch submission. Metadata probes do not bind
   missing values; clearing parameters preserves queued batch snapshots.
+- **B18:** Stopped batches report only the successfully executed prefix in
+  `BatchUpdateException`, never success for unattempted commands. Original
+  SQL state, vendor code, and cause are retained. Prepared batches also reject
+  execution after statement closure, including empty batches.
 
 Review IDs and verification details are recorded in [CODE_REVIEW.md](CODE_REVIEW.md).
 Other findings remain open; the review records current resolution status.

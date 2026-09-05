@@ -2,7 +2,7 @@
 
 Reviewed 2026-09-05 at `/home/jayson/DEV/brikk/fork-quack-jdbc`, version `0.7.0-SNAPSHOT`.
 
-This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Approved implementation passes resolve B1-B12, B19, B32, B39, and B40; resolution notes and V5-V13 record the scope and verification. Earlier fixes were committed as af771d2, followed by B8 as 5f366ac, B11 as 3104d54, B7 as 974f8d3, B12/B32 as afa7d03, B39 as 983687d, and B40 as 68c7bfb. B19 is the next separate fix. Existing changes to `CLAUDE.md` and `DUCKDB_COMPATIBILITY.md` were preserved.
+This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Approved implementation passes resolve B1-B12, B18, B19, B32, B39, and B40; resolution notes and V5-V14 record the scope and verification. Earlier fixes were committed as af771d2, followed by B8 as 5f366ac, B11 as 3104d54, B7 as 974f8d3, B12/B32 as afa7d03, B39 as 983687d, B40 as 68c7bfb, and B19 as 7d20147. B18 is the next separate fix. Existing changes to `CLAUDE.md` and `DUCKDB_COMPATIBILITY.md` were preserved.
 
 All source references below are relative to the repository root. `sql/`, `message/`, `codec/`, `type/`, and `transport/` abbreviate directories under `src/main/java/com/gizmodata/quack/jdbc/`. Original finding line numbers refer to the reviewed baseline; subsequent edits may shift them. Keep the original evidence alongside resolution notes.
 
@@ -17,7 +17,7 @@ Use these IDs in requests, changes, tests, and follow-up discussions, for exampl
 | C | C1-C4 | Native-parity observations requiring a compatibility decision before changes |
 | I | I1-I9 | Build, testing, and engineering improvements |
 | S | S1-S8 | Strengths to preserve, not implementation tasks |
-| V | V1-V13 | Verification evidence and limitations, not implementation tasks |
+| V | V1-V14 | Verification evidence and limitations, not implementation tasks |
 
 IDs are permanent and independent of severity, priority rank, and document order. B1-B40 match the original full report's numbered findings, not the shorter chat summary's numbering. Never renumber or reuse an ID; record resolution under the existing item and append new IDs for new findings. If an item needs separate work units, retain its parent ID and introduce suffixes such as B4a and B4b.
 
@@ -178,6 +178,8 @@ After closing a connection, its statements and results still report open. After 
 Location: `sql/QuackStatement.java:38-47`; `sql/QuackPreparedStatement.java:138-146`.
 
 A three-entry batch with a duplicate-key error in the middle throws counts `[1, EXECUTE_FAILED, 0]`. The last command was never attempted but zero indicates a successful zero-row update. With stop-on-error behavior, return the successful prefix, or continue all commands and accurately populate every status. Test errors at each position in both batch implementations. Confirmed live.
+
+**Resolution (2026-09-05): resolved.** Both batch implementations retain stop-on-error execution and copy only the successful prefix into BatchUpdateException. The failed command and unattempted suffix have no entries; genuine zero-row successes are retained. The original message, SQL state, vendor code, and SQLException cause are preserved. Batch queues are cleared on caught SQL execution errors and on success. Prepared executeBatch now performs the same initial open-state check as Statement, including for empty batches. Counts describe execution, not commitment, and do not change manual rollback semantics. See V14.
 
 ### B19. Missing bindings become NULL; extra parameter indices are accepted [P2]
 
@@ -390,7 +392,7 @@ Probe artifacts are under `/tmp/opencode/quack-statement-audit/`, `/tmp/opencode
 
 ### V3. Verification limits
 
-The original review did not execute publication workflows or contact production servers, and no DBeaver UI compatibility certification is implied. V1-V2 describe that review. V5-V12 separately record approved implementation passes; they do not constitute verification of every remaining open finding. User-requested pushes trigger the repository's normal CI and snapshot workflows.
+The original review did not execute publication workflows or contact production servers, and no DBeaver UI compatibility certification is implied. V1-V2 describe that review. V5-V14 separately record approved implementation passes; they do not constitute verification of every remaining open finding. User-requested pushes trigger the repository's normal CI and snapshot workflows.
 
 ### V4. Workspace preservation
 
@@ -516,6 +518,19 @@ QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn 
 
 Result: BUILD SUCCESS; 297 tests, zero failures, zero errors, the same two networking-environment skips as V10. All integration suites ran on DuckDB 1.5.5 with native oracle 1.5.5.0. Runtime Java 21.0.2; Java 17 compilation target. B18 remains the next separate commit. Pre-existing CLAUDE.md and DUCKDB_COMPATIBILITY.md changes remain untouched.
 
+### V14. B18 batch failure verification
+
+B18 follows the separate B19 commit. Two unit methods and one integration method reproduced the original count/closed-state defects before the fix. Fault injection tests every failure position in both implementations, exact successful counts (including zero), SQL state/vendor code/cause preservation, no later attempts, queue clearing, reuse, success, and empty/closed batches. A 12-case live matrix covers Statement/PreparedStatement, autocommit/manual transactions, and first/middle/last duplicate-key failures, checking persisted rows and rollback separately from reported execution counts. Independent read-only review found no actionable B18 findings and confirmed the JDBC stopped-prefix contract.
+
+Full builds on 2026-09-05:
+
+```bash
+QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn --batch-mode --no-transfer-progress -Poracle clean verify
+QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb JAVA_HOME=/home/jayson/.local/share/mise/installs/java/17.0.2 mvn --batch-mode --no-transfer-progress -Poracle clean verify
+```
+
+Both builds: BUILD SUCCESS; 300 tests, zero failures, zero errors, the same two networking-environment skips as V10. All integration suites ran on DuckDB 1.5.5 with native oracle 1.5.5.0. Actual runtimes: Java 21.0.2 and Java 17.0.2, both targeting Java 17. No runtime dependencies added. The preceding B39/B40 push passed CI and snapshot publication; B19/B18 remain separate local commits until another push is requested. Pre-existing CLAUDE.md and DUCKDB_COMPATIBILITY.md remain untouched.
+
 ## Top Five Priorities
 
 This is the original approved implementation order, now completed as recorded under each ID and V5. It is retained for traceability, not presented as five outstanding tasks. The ranking prioritized security exposure and the risk of silently persisting incorrect data or violating rollback expectations, not ease of implementation. Original complexity estimates included a complete fix and targeted regression tests; they were not elapsed-time commitments. Low meant localized conversion/validation work, Medium coordinated paths and a boundary-test matrix, and High substantial semantic or API-design risk.
@@ -528,4 +543,4 @@ This is the original approved implementation order, now completed as recorded un
 | 4 | B10 | Select and validate the URL catalog | Low-Medium | Unqualified writes can reach the wrong database. Initialize the server catalog before caching it, handle failed initialization cleanup, and test attached, nonexistent, and quoted catalog names. |
 | 5 | B4 | Preserve exact numeric conversions | Low-Medium | Affects common BIGINT/DECIMAL reads and decimal writes. Remove floating-point and long intermediates for exact values; test large positive/negative integers, scales, and typed BigInteger retrieval. |
 
-These ranks do not change any finding's ID. Approved follow-ups have also resolved B6 and B2+B3 (V6), B8 (V7), B11 (V8), B7 (V9), B12/B32 (V10), B39 (V11), B40 (V12), and B19 (V13). All original P1 findings are resolved. The next agreed priority is B18 (batch failure counts). Use I4-I6 alongside fixes, address remaining value corruption and JDBC execution/lifecycle/deadlines, and promote verification into CI (I1-I3). C items still require compatibility decisions; cleanup and performance remain tracked by L1-L6 and I7-I9.
+These ranks do not change any finding's ID. Approved follow-ups have also resolved B6 and B2+B3 (V6), B8 (V7), B11 (V8), B7 (V9), B12/B32 (V10), B39 (V11), B40 (V12), B19 (V13), and B18 (V14). All original P1 findings are resolved. The next recommended pass is remaining value corruption (B29-B31), followed by execution correctness (B15/B16/B22), resource ownership, and deadlines. Use I4-I6 alongside fixes and promote verification into CI (I1-I3). C items still require compatibility decisions; cleanup and performance remain tracked by L1-L6 and I7-I9.

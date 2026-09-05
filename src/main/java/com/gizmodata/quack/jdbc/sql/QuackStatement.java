@@ -8,6 +8,7 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public class QuackStatement extends SkeletalStatement {
@@ -42,9 +43,9 @@ public class QuackStatement extends SkeletalStatement {
             try {
                 counts[i] = executeUpdate(batch.get(i));
             } catch (SQLException e) {
-                counts[i] = java.sql.Statement.EXECUTE_FAILED;
                 batch.clear();
-                throw new java.sql.BatchUpdateException(e.getMessage(), counts, e);
+                throw new java.sql.BatchUpdateException(e.getMessage(), e.getSQLState(), e.getErrorCode(),
+                        Arrays.copyOf(counts, i), e);
             }
         }
         batch.clear();
