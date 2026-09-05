@@ -1,5 +1,6 @@
 package com.gizmodata.quack.jdbc.sql;
 
+import com.gizmodata.quack.jdbc.codec.DecodeLimits;
 import com.gizmodata.quack.jdbc.transport.QuackUri;
 import com.gizmodata.quack.jdbc.transport.QuackTransportFactory;
 
@@ -85,8 +86,27 @@ public final class QuackDriver implements Driver {
         requestTimeout.description = "Per-request HTTP timeout as seconds or ISO-8601 duration (default: 60 seconds).";
         requestTimeout.required = false;
 
+        DriverPropertyInfo maxResponseBytes = new DriverPropertyInfo("maxResponseBytes",
+                info != null ? info.getProperty("maxResponseBytes") : null);
+        maxResponseBytes.description = "Maximum HTTP response body size in bytes (positive integer, default: "
+                + DecodeLimits.DEFAULT.maxResponseBytes() + ").";
+        maxResponseBytes.required = false;
+
+        DriverPropertyInfo maxDecodedBytes = new DriverPropertyInfo("maxDecodedBytes",
+                info != null ? info.getProperty("maxDecodedBytes") : null);
+        maxDecodedBytes.description = "Maximum decoded allocation budget in bytes (positive long, default: "
+                + DecodeLimits.DEFAULT.maxDecodedBytes() + ").";
+        maxDecodedBytes.required = false;
+
+        DriverPropertyInfo maxNestingDepth = new DriverPropertyInfo("maxNestingDepth",
+                info != null ? info.getProperty("maxNestingDepth") : null);
+        maxNestingDepth.description = "Maximum decode nesting depth (integer 1..128, default: "
+                + DecodeLimits.DEFAULT.maxNestingDepth() + ").";
+        maxNestingDepth.required = false;
+
         return new DriverPropertyInfo[]{
-                token, password, tokenEnv, tokenFile, tls, connectTimeout, requestTimeout
+                token, password, tokenEnv, tokenFile, tls, connectTimeout, requestTimeout,
+                maxResponseBytes, maxDecodedBytes, maxNestingDepth
         };
     }
 

@@ -1,6 +1,5 @@
 package com.gizmodata.quack.jdbc.type;
 
-import com.gizmodata.quack.jdbc.QuackProtocolException;
 import com.gizmodata.quack.jdbc.QuackUnsupportedTypeException;
 import com.gizmodata.quack.jdbc.codec.BinaryReader;
 import com.gizmodata.quack.jdbc.codec.BinaryWriter;
@@ -125,11 +124,7 @@ public final class LogicalTypeCodec {
                 case ENUM -> {
                     int valuesCount = reader.readRequiredField(200, reader::readUlebInt);
                     List<String> values = reader.readRequiredField(201,
-                            () -> reader.readList(i -> reader.readString()));
-                    if (values.size() != valuesCount) {
-                        throw new QuackProtocolException(
-                                "ENUM metadata declared " + valuesCount + " values but serialized " + values.size());
-                    }
+                            () -> reader.readList(valuesCount, i -> reader.readString()));
                     yield new ExtraTypeInfo.EnumInfo(values, alias);
                 }
                 case AGGREGATE_STATE -> new ExtraTypeInfo.AggregateStateInfo(

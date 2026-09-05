@@ -1,6 +1,7 @@
 package com.gizmodata.quack.jdbc.sql;
 
 import com.gizmodata.quack.jdbc.QuackException;
+import com.gizmodata.quack.jdbc.codec.DecodeLimits;
 import com.gizmodata.quack.jdbc.codec.HugeIntParts;
 import com.gizmodata.quack.jdbc.message.MessageHeader;
 import com.gizmodata.quack.jdbc.message.MessageType;
@@ -23,6 +24,7 @@ import java.util.Properties;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -40,6 +42,9 @@ class QuackDriverCustomTransportTest {
         properties.setProperty("tls", "true");
         properties.setProperty("connectTimeout", "99");
         properties.setProperty("requestTimeout", "99");
+        properties.setProperty("maxResponseBytes", "4096");
+        properties.setProperty("maxDecodedBytes", "5000000000");
+        properties.setProperty("maxNestingDepth", "16");
 
         try (Connection connection = driver.connect(
                 "jdbc:quack://example.test:1234/db?token=url-token&connectTimeout=3&requestTimeout=PT4S",
@@ -61,6 +66,7 @@ class QuackDriverCustomTransportTest {
         assertEquals(Optional.of("url-token"), uri.token());
         assertEquals(Duration.ofSeconds(3), uri.connectTimeout());
         assertEquals(Duration.ofSeconds(4), uri.requestTimeout());
+        assertEquals(new DecodeLimits(4096, 5000000000L, 16), uri.decodeLimits());
 
         assertEquals(3, transport.requests.size());
         QuackMessage firstRequest = transport.requests.get(0);
@@ -126,6 +132,49 @@ class QuackDriverCustomTransportTest {
         assertEquals("tls", propertyInfo[4].name);
         assertEquals("connectTimeout", propertyInfo[5].name);
         assertEquals("requestTimeout", propertyInfo[6].name);
+    }
+
+    @Test
+    void propertyInfoIncludesOptionalDecodeLimitsAndDefaults() {
+        Properties properties = new Properties();
+        properties.setProperty("maxResponseBytes", "4096");
+        properties.setProperty("maxDecodedBytes", "5000000000");
+        properties.setProperty("maxNestingDepth", "16");
+        DriverPropertyInfo[] descriptors = new QuackDriver().getPropertyInfo(null, properties);
+
+        String[] names = {"maxResponseBytes", "maxDecodedBytes", "maxNestingDepth"};
+        String[] defaults = {Integer.toString(DecodeLimits.DEFAULT.maxResponseBytes()),
+                Long.toString(DecodeLimits.DEFAULT.maxDecodedBytes()),
+                Integer.toString(DecodeLimits.DEFAULT.maxNestingDepth())};
+        assertEquals(10, descriptors.length);
+        for (int i = 0; i < names.length; i++) {
+            DriverPropertyInfo descriptor = descriptors[7 + i];
+            assertEquals(names[i], descriptor.name);
+            assertEquals(properties.getProperty(names[i]), descriptor.value);
+            assertFalse(descriptor.required);
+            assertTrue(descriptor.description.contains("default: " + defaults[i]));
+        }
+        assertTrue(descriptors[7].description.contains("bytes"));
+        assertTrue(descriptors[8].description.contains("bytes"));
+        assertTrue(descriptors[9].description.contains("1..128"));
+        assertEquals(10, new QuackDriver().getPropertyInfo(null, null).length);
+    }
+
+    @Test
+    void defaultHttpTransportRejectsInvalidLimitsBeforeConnecting() {
+        for (String key : new String[]{"maxResponseBytes", "maxDecodedBytes", "maxNestingDepth"}) {
+            Properties properties = new Properties();
+            properties.setProperty(key, "invalid-sensitive-value");
+            properties.setProperty("password", "password-secret");
+
+            SQLException error = assertThrows(SQLException.class,
+                    () -> new QuackDriver().connect("jdbc:quack://example.test?token=url-secret", properties));
+
+            assertTrue(error.getMessage().contains(key));
+            assertFalse(error.getMessage().contains("secret"));
+            assertFalse(error.getMessage().contains("sensitive-value"));
+            assertInstanceOf(QuackException.class, error.getCause());
+        }
     }
 
     @Test

@@ -21,7 +21,8 @@ public final class Validity {
 
     /** Number of {@code long}s required to hold validity for {@code count} rows. */
     public static int wordCount(int count) {
-        return (count + 63) >>> 6;
+        if (count < 0) throw new IllegalArgumentException("Negative validity row count");
+        return (int) (((long) count + 63) >>> 6);
     }
 
     /** Number of bytes the wire format uses for the validity mask. */

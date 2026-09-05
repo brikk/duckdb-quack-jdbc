@@ -2,11 +2,13 @@ package com.gizmodata.quack.jdbc.transport;
 
 import com.gizmodata.quack.jdbc.QuackException;
 import com.gizmodata.quack.jdbc.QuackServerException;
+import com.gizmodata.quack.jdbc.codec.DecodeLimits;
 import com.gizmodata.quack.jdbc.codec.QuackConstants;
 import com.gizmodata.quack.jdbc.message.MessageCodec;
 import com.gizmodata.quack.jdbc.message.QuackMessage;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.ConnectException;
 import java.net.Inet6Address;
 import java.net.InetAddress;
@@ -21,7 +23,9 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.channels.ClosedChannelException;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -49,6 +53,7 @@ public final class QuackHttpTransport implements QuackTransport {
     private final HttpClient httpClient;
     private final Duration requestTimeout;
     private final Map<String, String> extraHeaders;
+    private final DecodeLimits decodeLimits;
 
     public QuackHttpTransport(URI endpoint) {
         this(endpoint, HttpClient.newBuilder()
@@ -63,10 +68,16 @@ public final class QuackHttpTransport implements QuackTransport {
 
     public QuackHttpTransport(URI endpoint, HttpClient httpClient, Duration requestTimeout,
                               Map<String, String> extraHeaders) {
+        this(endpoint, httpClient, requestTimeout, extraHeaders, DecodeLimits.DEFAULT);
+    }
+
+    public QuackHttpTransport(URI endpoint, HttpClient httpClient, Duration requestTimeout,
+                              Map<String, String> extraHeaders, DecodeLimits decodeLimits) {
         this.endpoint = endpoint;
         this.httpClient = httpClient;
         this.requestTimeout = requestTimeout;
         this.extraHeaders = Map.copyOf(extraHeaders);
+        this.decodeLimits = Objects.requireNonNull(decodeLimits, "decodeLimits");
     }
 
     public static QuackHttpTransport from(QuackUri uri) {
@@ -74,7 +85,7 @@ public final class QuackHttpTransport implements QuackTransport {
                 .connectTimeout(uri.connectTimeout())
                 .build();
         return new QuackHttpTransport(uri.httpUri(), client, uri.requestTimeout(),
-                uri.extraHttpHeaders());
+                uri.extraHttpHeaders(), uri.decodeLimits());
     }
 
     Duration requestTimeout() {
@@ -105,9 +116,9 @@ public final class QuackHttpTransport implements QuackTransport {
                     .POST(BodyPublishers.ofByteArray(body))
                     .build();
 
-            HttpResponse<byte[]> response;
+            HttpResponse<InputStream> response;
             try {
-                response = httpClient.send(httpRequest, BodyHandlers.ofByteArray());
+                response = httpClient.send(httpRequest, BodyHandlers.ofInputStream());
             } catch (ConnectException | HttpConnectTimeoutException | ClosedChannelException e) {
                 lastFailure = e;
                 continue;
@@ -118,24 +129,60 @@ public final class QuackHttpTransport implements QuackTransport {
                 throw new QuackException("Quack HTTP request was interrupted", e);
             }
 
-            if (response.statusCode() / 100 != 2) {
-                StringBuilder message = new StringBuilder("Quack HTTP returned status ")
-                        .append(response.statusCode()).append(" from ").append(attempt);
-                // The quack server reports the underlying failure (e.g. a
-                // serialization mismatch) in this header, with an empty body.
-                response.headers().firstValue("EXCEPTION_WHAT")
-                        .filter(detail -> !detail.isEmpty())
-                        .ifPresent(detail -> message.append(": ").append(detail));
-                throw new QuackException(message.toString());
+            // A response means the POST may have executed. Body failures must
+            // never enter the connect-only address fallback above.
+            try (InputStream responseBody = response.body()) {
+                if (response.statusCode() / 100 != 2) {
+                    StringBuilder message = new StringBuilder("Quack HTTP returned status ")
+                            .append(response.statusCode()).append(" from ").append(attempt);
+                    // The quack server reports the underlying failure (e.g. a
+                    // serialization mismatch) in this header, with an empty body.
+                    response.headers().firstValue("EXCEPTION_WHAT")
+                            .filter(detail -> !detail.isEmpty())
+                            .ifPresent(detail -> message.append(": ").append(detail));
+                    throw new QuackException(message.toString());
+                }
+                if (response.headers().firstValueAsLong("Content-Length").orElse(-1)
+                        > decodeLimits.maxResponseBytes()) {
+                    throw new QuackException("Quack HTTP response exceeds maxResponseBytes limit of "
+                            + decodeLimits.maxResponseBytes() + " bytes");
+                }
+                QuackMessage decoded = MessageCodec.decode(readResponseBody(responseBody), decodeLimits);
+                if (decoded instanceof QuackMessage.ErrorResponse err) {
+                    throw new QuackServerException(err.message());
+                }
+                return decoded;
+            } catch (IOException e) {
+                throw new QuackException(buildErrorMessage(e, attempt), e);
             }
-            QuackMessage decoded = MessageCodec.decode(response.body());
-            if (decoded instanceof QuackMessage.ErrorResponse err) {
-                throw new QuackServerException(err.message());
-            }
-            return decoded;
         }
 
         throw new QuackException(buildExhaustedMessage(attempts, lastFailure), lastFailure);
+    }
+
+    private byte[] readResponseBody(InputStream body) throws IOException {
+        int limit = decodeLimits.maxResponseBytes();
+        byte[] bytes = new byte[Math.min(8192, limit)];
+        int size = 0;
+        while (true) {
+            if (size == bytes.length) {
+                // Probe before growing: exact-limit bodies are valid, and an
+                // oversized body needs only one extra byte, never extra capacity.
+                int next = body.read();
+                if (next == -1) return bytes;
+                if (size == limit) {
+                    throw new QuackException("Quack HTTP response exceeds maxResponseBytes limit of "
+                            + limit + " bytes");
+                }
+                bytes = Arrays.copyOf(bytes, (int) Math.min(limit, 2L * bytes.length));
+                bytes[size++] = (byte) next;
+            } else {
+                int read = body.read(bytes, size, bytes.length - size);
+                if (read == -1) return Arrays.copyOf(bytes, size);
+                // The read is bounded by remaining capacity, so size cannot overflow.
+                size += read;
+            }
+        }
     }
 
     URI[] endpointCandidates() {

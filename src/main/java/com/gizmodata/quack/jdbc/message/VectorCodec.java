@@ -59,18 +59,7 @@ public final class VectorCodec {
             List<LogicalType> types = reader.readRequiredField(101,
                     () -> reader.readList(i -> LogicalTypeCodec.decode(reader)));
             List<DecodedVector> columns = reader.readRequiredField(102,
-                    () -> reader.readList(i -> {
-                        if (i >= types.size()) {
-                            throw new QuackProtocolException(
-                                    "Column vector " + i + " has no matching logical type");
-                        }
-                        return decodeVector(reader, types.get(i), rowCount);
-                    }));
-            if (columns.size() != types.size()) {
-                throw new QuackProtocolException(
-                        "DataChunk declared " + types.size() + " types but serialized "
-                                + columns.size() + " columns");
-            }
+                    () -> reader.readList(types.size(), i -> decodeVector(reader, types.get(i), rowCount)));
             return new DataChunk(rowCount, types, columns);
         });
     }
@@ -80,16 +69,27 @@ public final class VectorCodec {
     }
 
     private static DecodedVector decodeVectorBody(BinaryReader reader, LogicalType type, int count) {
-        int vectorTypeId = reader.readOptionalField(90, reader::readUlebInt, VectorType.FLAT.wireId());
-        VectorType vectorType = VectorType.fromWireId(vectorTypeId);
-        return switch (vectorType) {
-            case FLAT -> decodeFlatVector(reader, type, count);
-            case FSST -> throw new QuackUnsupportedTypeException(
-                    "FSST-compressed vectors are not yet supported");
-            case CONSTANT -> broadcastConstant(reader, type, count);
-            case DICTIONARY -> decodeDictionary(reader, type, count);
-            case SEQUENCE -> decodeSequence(reader, type, count);
-        };
+        return reader.nested(() -> {
+            if (count < 0) throw new QuackProtocolException("Negative vector row count");
+            int vectorTypeId = reader.readOptionalField(90, reader::readUlebInt, VectorType.FLAT.wireId());
+            VectorType vectorType = VectorType.fromWireId(vectorTypeId);
+            PhysicalType physical = PhysicalTypeUtil.getPhysicalType(type);
+            // Covers arrays, masks, selections and scalar conversion objects. Nested containers
+            // and variable-length bytes are charged separately; projections only copy references.
+            int perRow = (vectorType == VectorType.FLAT || vectorType == VectorType.SEQUENCE)
+                    && needsObjectMaterialization(type, physical) ? 1024 : 32;
+            reader.reserve(128L + (long) perRow * count);
+            DecodedVector result = switch (vectorType) {
+                case FLAT -> decodeFlatVector(reader, type, count);
+                case FSST -> throw new QuackUnsupportedTypeException(
+                        "FSST-compressed vectors are not yet supported");
+                case CONSTANT -> broadcastConstant(reader, type, count);
+                case DICTIONARY -> decodeDictionary(reader, type, count);
+                case SEQUENCE -> decodeSequence(reader, type, count);
+            };
+            if (result.size() != count) throw new QuackProtocolException("Decoded vector cardinality mismatch");
+            return result;
+        });
     }
 
     private static DecodedVector broadcastConstant(BinaryReader reader, LogicalType type, int count) {
@@ -323,22 +323,18 @@ public final class VectorCodec {
         PhysicalType physicalType = PhysicalTypeUtil.getPhysicalType(type);
 
         if (physicalType.isConstantSize()) {
-            int byteLength = physicalType.byteWidth() * count;
-            byte[] bytes = reader.readRequiredField(102, reader::readBlob);
-            if (bytes.length != byteLength) {
-                throw new QuackProtocolException(
-                        "Fixed-size vector data has " + bytes.length + " bytes, expected " + byteLength);
-            }
-            return decodeFixedFlatVector(type, physicalType, bytes, count, validity);
+            int byteLength = checkedProduct(physicalType.byteWidth(), count);
+            byte[] bytes = reader.readRequiredField(102, () -> reader.readBlob(byteLength));
+            return decodeFixedFlatVector(reader.subReader(bytes), type, physicalType, count, validity);
         }
 
         return switch (physicalType) {
             case VARCHAR -> {
                 List<byte[]> raw = reader.readRequiredField(102,
-                        () -> reader.readList(i -> reader.readStringBytes()));
+                        () -> reader.readList(count, i -> reader.readStringBytes()));
                 Object[] values = new Object[raw.size()];
                 for (int i = 0; i < raw.size(); i++) {
-                    values[i] = Validity.isValid(validity, i) ? decodeStringLikeValue(type, raw.get(i)) : null;
+                    values[i] = Validity.isValid(validity, i) ? decodeStringLikeValue(reader, type, raw.get(i)) : null;
                 }
                 yield new DecodedVector.ObjectVec(type, values);
             }
@@ -346,22 +342,14 @@ public final class VectorCodec {
                 List<ChildType> children = PhysicalTypeUtil.getStructChildren(type);
                 boolean positional = children.stream().anyMatch(child -> child.name().isEmpty());
                 List<DecodedVector> childVectors = reader.readRequiredField(103,
-                        () -> reader.readList(i -> {
-                            if (i >= children.size()) {
-                                throw new QuackProtocolException(
-                                        "STRUCT child vector " + i + " has no matching type metadata");
-                            }
-                            return decodeVector(reader, children.get(i).type(), count);
-                        }));
-                if (childVectors.size() != children.size()) {
-                    throw new QuackProtocolException("STRUCT child vector count does not match type metadata");
-                }
+                        () -> reader.readList(children.size(), i -> decodeVector(reader, children.get(i).type(), count)));
                 Object[] values = new Object[count];
                 for (int row = 0; row < count; row++) {
                     if (!Validity.isValid(validity, row)) {
                         values[row] = null;
                         continue;
                     }
+                    reader.reserve(64L + 128L * children.size());
                     if (positional) {
                         // Tuple fields share an empty name; a map would discard their positions.
                         List<Object> attributes = new ArrayList<>(children.size());
@@ -391,6 +379,10 @@ public final class VectorCodec {
                         continue;
                     }
                     ListEntry e = entries.get(row);
+                    if (e.offset > listSize || e.length > listSize - e.offset) {
+                        throw new QuackProtocolException("LIST slice exceeds child vector bounds");
+                    }
+                    reader.reserve(64L + 128L * e.length);
                     List<Object> slice = new ArrayList<>(e.length);
                     for (int k = 0; k < e.length; k++) {
                         slice.add(childVector.getObject(e.offset + k));
@@ -407,8 +399,9 @@ public final class VectorCodec {
                             + ", expected " + expected);
                 }
                 LogicalType childType = PhysicalTypeUtil.getChildType(type);
+                int childCount = checkedProduct(arraySize, count);
                 DecodedVector childVector = reader.readRequiredField(104,
-                        () -> decodeVector(reader, childType, arraySize * count));
+                        () -> decodeVector(reader, childType, childCount));
                 Object[] values = new Object[count];
                 for (int row = 0; row < count; row++) {
                     if (!Validity.isValid(validity, row)) {
@@ -416,6 +409,7 @@ public final class VectorCodec {
                         continue;
                     }
                     int offset = row * arraySize;
+                    reader.reserve(64L + 64L * arraySize);
                     List<Object> slice = new ArrayList<>(arraySize);
                     for (int k = 0; k < arraySize; k++) {
                         slice.add(childVector.getObject(offset + k));
@@ -441,10 +435,8 @@ public final class VectorCodec {
 
     // ---- typed fixed-flat decoding ----
 
-    private static DecodedVector decodeFixedFlatVector(LogicalType type, PhysicalType physicalType,
-                                                       byte[] bytes, int count, long[] validity) {
-        BinaryReader reader = new BinaryReader(bytes);
-
+    private static DecodedVector decodeFixedFlatVector(BinaryReader reader, LogicalType type,
+                                                       PhysicalType physicalType, int count, long[] validity) {
         // Logical types that materialize into non-primitive Java objects always go via ObjectVec.
         if (needsObjectMaterialization(type, physicalType)) {
             Object[] values = new Object[count];
@@ -643,10 +635,13 @@ public final class VectorCodec {
         return decodeEnumOrInt(type, (int) index);
     }
 
-    private static Object decodeStringLikeValue(LogicalType type, byte[] raw) {
+    private static Object decodeStringLikeValue(BinaryReader reader, LogicalType type, byte[] raw) {
         return switch (type.id()) {
             case BLOB, GEOMETRY, BIT -> raw;
-            default -> new String(raw, java.nio.charset.StandardCharsets.UTF_8);
+            default -> {
+                reader.reserve(64L + 4L * raw.length);
+                yield new String(raw, java.nio.charset.StandardCharsets.UTF_8);
+            }
         };
     }
 
@@ -665,12 +660,8 @@ public final class VectorCodec {
     }
 
     private static int[] readSelectionVector(BinaryReader reader, int count) {
-        int expectedBytes = count * 4;
-        byte[] bytes = reader.readBlob();
-        if (bytes.length != expectedBytes) {
-            throw new QuackProtocolException("Selection vector has " + bytes.length
-                    + " bytes, expected " + expectedBytes);
-        }
+        int expectedBytes = checkedProduct(count, 4);
+        byte[] bytes = reader.readBlob(expectedBytes);
         int[] out = new int[count];
         for (int i = 0; i < count; i++) {
             int o = i * 4;
@@ -684,23 +675,22 @@ public final class VectorCodec {
 
     private static long[] readValidityMask(BinaryReader reader, int count) {
         int expected = Validity.wireByteCount(count);
-        byte[] bytes = reader.readBlob();
-        if (bytes.length != expected) {
-            throw new QuackProtocolException("Validity mask has " + bytes.length
-                    + " bytes, expected " + expected);
-        }
+        byte[] bytes = reader.readBlob(expected);
         return Validity.fromBytes(bytes, count);
     }
 
     private static List<ListEntry> readListEntries(BinaryReader reader, int count) {
-        List<ListEntry> entries = reader.readList(i -> reader.readObject(() -> new ListEntry(
+        return reader.readList(count, i -> reader.readObject(() -> new ListEntry(
                 reader.readRequiredField(100, reader::readUlebInt),
                 reader.readRequiredField(101, reader::readUlebInt))));
-        if (entries.size() != count) {
-            throw new QuackProtocolException("LIST vector serialized " + entries.size()
-                    + " entries for " + count + " rows");
+    }
+
+    private static int checkedProduct(int size, int count) {
+        long product = (long) size * count;
+        if (size < 0 || count < 0 || product > Integer.MAX_VALUE) {
+            throw new QuackProtocolException("Vector size exceeds supported integer range");
         }
-        return entries;
+        return (int) product;
     }
 
     // ---- encoder ----

@@ -1,6 +1,7 @@
 package com.gizmodata.quack.jdbc.transport;
 
 import com.gizmodata.quack.jdbc.QuackException;
+import com.gizmodata.quack.jdbc.codec.DecodeLimits;
 import com.gizmodata.quack.jdbc.codec.QuackConstants;
 
 import java.net.URI;
@@ -133,6 +134,14 @@ public record QuackUri(String host,
         return parseDurationProperty("requestTimeout", QuackHttpTransport.DEFAULT_REQUEST_TIMEOUT);
     }
 
+    public DecodeLimits decodeLimits() {
+        return new DecodeLimits(
+                (int) parseLimitProperty("maxResponseBytes", DecodeLimits.DEFAULT.maxResponseBytes(),
+                        Integer.MAX_VALUE),
+                parseLimitProperty("maxDecodedBytes", DecodeLimits.DEFAULT.maxDecodedBytes(), Long.MAX_VALUE),
+                (int) parseLimitProperty("maxNestingDepth", DecodeLimits.DEFAULT.maxNestingDepth(), 128));
+    }
+
     public String quackUri() {
         return "quack:" + host + ":" + port;
     }
@@ -204,5 +213,18 @@ public record QuackUri(String host,
             throw new QuackException("Quack JDBC property " + key
                     + " must be a positive number of seconds or ISO-8601 duration: " + value, e);
         }
+    }
+
+    private long parseLimitProperty(String key, long defaultValue, long maximum) {
+        String value = properties.get(key);
+        if (value == null) return defaultValue;
+        try {
+            long parsed = Long.parseLong(value.trim());
+            if (parsed > 0 && parsed <= maximum) return parsed;
+        } catch (NumberFormatException ignored) {
+            // Do not echo property values or retain a cause that could contain credentials.
+        }
+        throw new QuackException("Quack JDBC property " + key
+                + " must be an integer between 1 and " + maximum);
     }
 }

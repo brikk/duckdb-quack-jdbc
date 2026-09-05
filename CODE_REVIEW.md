@@ -2,7 +2,7 @@
 
 Reviewed 2026-09-05 at `/home/jayson/DEV/brikk/fork-quack-jdbc`, version `0.7.0-SNAPSHOT`.
 
-This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Approved implementation passes resolve B1-B11; resolution notes and V5-V9 record the scope and verification. Earlier fixes were committed as af771d2, followed by B8 as 5f366ac and B11 as 3104d54; B7 is a subsequent separate fix. Existing changes to `CLAUDE.md` and `DUCKDB_COMPATIBILITY.md` were preserved.
+This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Approved implementation passes resolve B1-B12 and B32; resolution notes and V5-V10 record the scope and verification. Earlier fixes were committed as af771d2, followed by B8 as 5f366ac, B11 as 3104d54, and B7 as 974f8d3. B12/B32 form the next coordinated decoder-hardening pass. Existing changes to `CLAUDE.md` and `DUCKDB_COMPATIBILITY.md` were preserved.
 
 All source references below are relative to the repository root. `sql/`, `message/`, `codec/`, `type/`, and `transport/` abbreviate directories under `src/main/java/com/gizmodata/quack/jdbc/`. Original finding line numbers refer to the reviewed baseline; subsequent edits may shift them. Keep the original evidence alongside resolution notes.
 
@@ -17,7 +17,7 @@ Use these IDs in requests, changes, tests, and follow-up discussions, for exampl
 | C | C1-C4 | Native-parity observations requiring a compatibility decision before changes |
 | I | I1-I9 | Build, testing, and engineering improvements |
 | S | S1-S8 | Strengths to preserve, not implementation tasks |
-| V | V1-V9 | Verification evidence and limitations, not implementation tasks |
+| V | V1-V10 | Verification evidence and limitations, not implementation tasks |
 
 IDs are permanent and independent of severity, priority rank, and document order. B1-B40 match the original full report's numbered findings, not the shorter chat summary's numbering. Never renumber or reuse an ID; record resolution under the existing item and append new IDs for new findings. If an item needs separate work units, retain its parent ID and introduce suffixes such as B4a and B4b.
 
@@ -136,6 +136,10 @@ Tests: eight new QuackResultSetConversionTest methods, five CalendarTemporalInte
 Location: `codec/BinaryReader.java:182-188,265-269`; `message/VectorCodec.java:95-104`.
 
 List lengths directly become allocation capacities, bounds checks use overflowing offset+length arithmetic, and recursive compressed vectors have no nesting budget. In a heap-bounded local process, a five-byte maximum list length caused OutOfMemoryError, an overflowed byte-range check reached an impossible allocation, and about 60 KB of repeated CONSTANT headers caused StackOverflowError. Use remaining-length checks, checked arithmetic, allocation/decompressed-size budgets, and recursion limits. The HTTP response body is also buffered without a size cap, so harden that boundary too. These are local malformed-input probes, not claims about exploitation of a deployed server.
+
+**Resolution (2026-09-05): resolved with B32.** DecodeLimits defaults to 64 MiB response bodies, 256 MiB decoded allocation accounting, and 64 active nesting frames. BinaryReader uses remaining-length checks and shares allocation/depth state across payload subreaders. Metadata objects, collections, strings, vector materialization, compressed expansion, and nested slices consume the same per-message budget before allocation. Wire objects and inline CONSTANT/DICTIONARY recursion both enforce depth. Limits are configurable through connection properties and additive low-level overloads; existing signatures retain defaults.
+
+The HTTP transport incrementally reads bounded bodies, rejects oversized declared lengths early, checks actual bytes even without a length, and closes bodies on all paths. Body read/size/close/decode failures cannot replay the POST through address fallback. These limits are conservative accounting, not measured JVM heap or a global concurrency/retained-result cap; valid oversized messages may require tuning. Outbound application-generated data is not budgeted. B13/B14 deadlines and cancellation remain open. See README and V10.
 
 ## Additional Correctness Findings
 
@@ -261,7 +265,7 @@ Location: `message/VectorCodec.java:335-410`; `codec/BinaryReader.java:115-126,1
 
 A two-row VARCHAR vector with one encoded element decodes successfully as size one. Missing STRUCT children and invalid LIST offsets throw index errors. ARRAY multiplication is unchecked. Separately, nine 0x80 bytes followed by 0x02 overflow the tenth-byte shift and are accepted as zero by both LEB readers. Enforce cardinalities, child counts, slice bounds, checked arithmetic, and valid final-byte payload/sign-extension bits. Reproduced with independent local byte fixtures.
 
-**Partial follow-up (2026-09-05):** B7 now rejects missing and extra STRUCT child vectors. Remaining vector cardinalities, slice bounds, arithmetic, and LEB128 validation remain open under B32.
+**Resolution (2026-09-05): resolved with B12.** Following B7's STRUCT child-count fix, expected counts and blob sizes are now checked before allocating vector/metadata collections. VARCHAR, STRUCT, LIST, chunk columns, ENUM labels, fixed-width payloads, selections, and validity masks enforce their cardinalities. Non-null LIST slices validate bounds, including overlapping slices without assuming disjoint/ordered storage; null-slot payloads remain uninterpreted. ARRAY and byte products use checked long arithmetic. ULEB/SLEB readers reject invalid tenth-byte payload or continuation bits while preserving signed/unsigned extrema and representable nonminimal encodings. Independent wire fixtures cover rejection and valid behavior. See V10.
 
 ### B33. getUDTs loses filtering and scalar alias base types [P2]
 
@@ -378,7 +382,7 @@ Probe artifacts are under `/tmp/opencode/quack-statement-audit/`, `/tmp/opencode
 
 ### V3. Verification limits
 
-The original review did not execute publication workflows or contact production servers, and no DBeaver UI compatibility certification is implied. V1-V2 describe that review. V5-V8 separately record approved implementation passes; they do not constitute verification of every remaining open finding. The later user-requested push of af771d2 triggered the repository's normal CI and snapshot workflows.
+The original review did not execute publication workflows or contact production servers, and no DBeaver UI compatibility certification is implied. V1-V2 describe that review. V5-V10 separately record approved implementation passes; they do not constitute verification of every remaining open finding. The later user-requested push of af771d2 triggered the repository's normal CI and snapshot workflows.
 
 ### V4. Workspace preservation
 
@@ -452,6 +456,21 @@ QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn 
 
 Result: BUILD SUCCESS; 220 tests reported, zero failures, zero errors, one existing IPv6 availability skip. All integration suites ran against released DuckDB 1.5.5 with native oracle 1.5.5.0. Java runtime 21.0.2; Java 17 compilation target. No new runtime dependencies. Pre-existing CLAUDE.md and DUCKDB_COMPATIBILITY.md changes remain untouched and excluded from the B7 commit.
 
+### V10. B12/B32 bounded decoding verification
+
+Approved next priority after B7: B12 coordinated with B32. Independent review found no actionable issues in shared budgets, compressed recursion, shape checks, HTTP cleanup/replay behavior, or preserved APIs. Added 59 test invocations (including parameterized cases). The original maximum-list, byte-range-overflow, and deep-CONSTANT probes run in isolated processes with `-Xmx32m -Xss256k`, a watchdog, and no Error suppression; all fail with protocol exceptions instead of JVM resource errors.
+
+Full builds on 2026-09-05:
+
+```bash
+QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb JAVA_HOME=/home/jayson/.local/share/mise/installs/java/17.0.2 mvn --batch-mode --no-transfer-progress -Poracle clean verify
+QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn --batch-mode --no-transfer-progress -Poracle clean verify
+```
+
+Both builds: BUILD SUCCESS; 279 tests, zero failures, zero errors, two environment skips (existing IPv6 bind availability and a new multi-address localhost fallback test). All integration suites ran on DuckDB 1.5.5 with native oracle 1.5.5.0. Actual runtimes: Java 17.0.2 and Java 21.0.2, both targeting Java 17. Live regressions include 1 MB strings/BLOBs, 20,000-element lists, lowering/raising per-connection limits, and 100,000 rows with a larger 24-chunk fetch batch. Existing null, tuple, unsigned, Calendar, and nested APPEND coverage remains green.
+
+No runtime dependencies added. Limits, their conservative accounting, valid-message tuning, and separate deadline limitations are documented. Pre-existing CLAUDE.md and DUCKDB_COMPATIBILITY.md remain untouched and excluded from this pass.
+
 ## Top Five Priorities
 
 This is the original approved implementation order, now completed as recorded under each ID and V5. It is retained for traceability, not presented as five outstanding tasks. The ranking prioritized security exposure and the risk of silently persisting incorrect data or violating rollback expectations, not ease of implementation. Original complexity estimates included a complete fix and targeted regression tests; they were not elapsed-time commitments. Low meant localized conversion/validation work, Medium coordinated paths and a boundary-test matrix, and High substantial semantic or API-design risk.
@@ -464,4 +483,4 @@ This is the original approved implementation order, now completed as recorded un
 | 4 | B10 | Select and validate the URL catalog | Low-Medium | Unqualified writes can reach the wrong database. Initialize the server catalog before caching it, handle failed initialization cleanup, and test attached, nonexistent, and quoted catalog names. |
 | 5 | B4 | Preserve exact numeric conversions | Low-Medium | Affects common BIGINT/DECIMAL reads and decimal writes. Remove floating-point and long intermediates for exact values; test large positive/negative integers, scales, and typed BigInteger retrieval. |
 
-These ranks do not change any finding's ID. Approved follow-ups have also resolved B6 and B2+B3 (V6), B8 (V7), B11 (V8), and B7 (V9). B12 remains P1 work, not an optional follow-up. Use I4-I6 to broaden regression coverage, address JDBC execution/lifecycle and deadlines (B13-B22), resolve remaining metadata/value alignment (B23 and C1-C4), and promote verification into CI (I1-I3). Track remaining cleanup and performance work using L1-L6 and I7-I9.
+These ranks do not change any finding's ID. Approved follow-ups have also resolved B6 and B2+B3 (V6), B8 (V7), B11 (V8), B7 (V9), and B12/B32 (V10). All original P1 findings are resolved. The next agreed priorities are B39+B40 (TLS validation and redacted diagnostics), then B19+B18 (bindings and batch failure counts). Use I4-I6 alongside fixes, address remaining value corruption and JDBC execution/lifecycle/deadlines, and promote verification into CI (I1-I3). C items still require compatibility decisions; cleanup and performance remain tracked by L1-L6 and I7-I9.

@@ -107,6 +107,9 @@ jdbc:quack://host[:port][/database][?token=…&tls=…]
 | `useEncryption`      | false   | Alias for `tls` (matches the gizmosql-jdbc-driver convention).            |
 | `connectTimeout`     | 10      | HTTP connect timeout, as seconds or an ISO-8601 duration like `PT5S`.     |
 | `requestTimeout`     | 60      | Per-request HTTP timeout, as seconds or an ISO-8601 duration like `PT30S`. |
+| `maxResponseBytes`   | 67108864 | Maximum HTTP response body bytes (64 MiB); positive integer. |
+| `maxDecodedBytes`    | 268435456 | Per-message decoded allocation budget (256 MiB); positive long. |
+| `maxNestingDepth`    | 64       | Maximum active decoder nesting frames; integer from 1 to 128. |
 | `httpHeader.<Name>`  | (none)  | Extra HTTP header sent with every request (proxy/LB auth). Repeatable. Properties only — rejected on the URL. |
 
 These options can be set on the URL or via `java.util.Properties` passed
@@ -143,6 +146,29 @@ try (Connection conn = DriverManager.getConnection("jdbc:quack://127.0.0.1:9494"
     // use the connection normally
 }
 ```
+
+### Response and decoding limits
+
+The built-in HTTP transport bounds each response body, including chunked
+responses. The decoder shares one allocation budget across all columns,
+chunks, nested types, and compressed-vector expansion in that message.
+Nesting frames include wire objects and inline compressed vectors, not just
+SQL type depth. Oversized or malformed inputs fail instead of allocating
+from unchecked lengths. Bodies close on failure and are not replayed.
+
+`maxDecodedBytes` is conservative accounting for arrays, scalar objects,
+strings, nested containers, and intermediate allocations, not an exact JVM
+heap measurement. Valid but very large messages may exceed these defaults.
+Tune both byte limits for the available heap and concurrent connections;
+HTTP buffering/copies and application-retained results use additional memory.
+These are per-message limits, not a process-wide memory cap. They do not fix
+the separate whole-response deadline limitation of `requestTimeout`.
+
+Existing low-level constructors and `MessageCodec.decode(byte[])` use the
+default limits. Low-level callers can supply a `DecodeLimits` to
+`BinaryReader`, `MessageCodec.decode`, or the five-argument HTTP transport
+constructor. Fully custom transports must enforce their own body limit and
+pass `uri.decodeLimits()` to decoding if they want connection overrides.
 
 ### Safer token configuration
 
@@ -183,7 +209,8 @@ try (Connection conn = driver.connect(
             HttpClient httpClient = HttpClient.newBuilder()
                     .connectTimeout(uri.connectTimeout())
                     .build();
-            return new QuackHttpTransport(uri.httpUri(), httpClient, uri.requestTimeout());
+            return new QuackHttpTransport(uri.httpUri(), httpClient, uri.requestTimeout(),
+                    uri.extraHttpHeaders(), uri.decodeLimits());
         })) {
     // use the connection normally
 }

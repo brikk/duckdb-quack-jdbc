@@ -1,13 +1,18 @@
 package com.gizmodata.quack.jdbc.transport;
 
 import com.gizmodata.quack.jdbc.QuackException;
+import com.gizmodata.quack.jdbc.codec.DecodeLimits;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.time.Duration;
 import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -103,6 +108,71 @@ class QuackUriTest {
                 () -> QuackUri.parse("jdbc:quack://h:9494?connectTimeout=0").connectTimeout());
         assertThrows(RuntimeException.class,
                 () -> QuackUri.parse("jdbc:quack://h:9494?requestTimeout=forever").requestTimeout());
+    }
+
+    @Test
+    void decodeLimitsDefaultIndependently() {
+        assertEquals(DecodeLimits.DEFAULT, QuackUri.parse("jdbc:quack://h").decodeLimits());
+        assertEquals(new DecodeLimits(1024, DecodeLimits.DEFAULT.maxDecodedBytes(),
+                        DecodeLimits.DEFAULT.maxNestingDepth()),
+                QuackUri.parse("jdbc:quack://h?maxResponseBytes=1024").decodeLimits());
+        assertEquals(new DecodeLimits(DecodeLimits.DEFAULT.maxResponseBytes(), 4096,
+                        DecodeLimits.DEFAULT.maxNestingDepth()),
+                QuackUri.parse("jdbc:quack://h?maxDecodedBytes=4096").decodeLimits());
+        assertEquals(new DecodeLimits(DecodeLimits.DEFAULT.maxResponseBytes(),
+                        DecodeLimits.DEFAULT.maxDecodedBytes(), 8),
+                QuackUri.parse("jdbc:quack://h?maxNestingDepth=8").decodeLimits());
+    }
+
+    @Test
+    void decodeLimitsComeFromPropertiesWithUrlPrecedence() {
+        Properties properties = propsOf("maxResponseBytes", " 4096 ");
+        properties.setProperty("maxDecodedBytes", "5000000000");
+        properties.setProperty("maxNestingDepth", "16");
+
+        assertEquals(new DecodeLimits(4096, 5000000000L, 16),
+                QuackUri.parse("jdbc:quack://h", properties).decodeLimits());
+        assertEquals(new DecodeLimits(2048, 6000000000L, 32),
+                QuackUri.parse("jdbc:quack://h?maxResponseBytes=2048"
+                        + "&maxDecodedBytes=6000000000&maxNestingDepth=32", properties).decodeLimits());
+    }
+
+    @Test
+    void decodeLimitsAcceptInclusiveNumericBounds() {
+        assertEquals(new DecodeLimits(1, 1, 1), QuackUri.parse("jdbc:quack://h"
+                + "?maxResponseBytes=1&maxDecodedBytes=1&maxNestingDepth=1").decodeLimits());
+        assertEquals(new DecodeLimits(Integer.MAX_VALUE, Long.MAX_VALUE, 128),
+                QuackUri.parse("jdbc:quack://h?maxResponseBytes=2147483647"
+                        + "&maxDecodedBytes=9223372036854775807&maxNestingDepth=128").decodeLimits());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", " ", "0", "-1", "1.5", "64MiB", "NaN",
+            "9223372036854775808", "sensitive-value"})
+    void decodeLimitsRejectInvalidValuesWithoutCredentials(String value) {
+        for (String key : new String[]{"maxResponseBytes", "maxDecodedBytes", "maxNestingDepth"}) {
+            Properties properties = propsOf(key, value);
+            properties.setProperty("password", "password-secret");
+            properties.setProperty("httpHeader.Authorization", "Bearer header-secret");
+            QuackUri uri = QuackUri.parse("jdbc:quack://h?token=url-secret", properties);
+
+            QuackException error = assertThrows(QuackException.class, uri::decodeLimits);
+
+            assertTrue(error.getMessage().contains(key));
+            assertTrue(error.getMessage().contains("integer between 1 and"));
+            assertFalse(error.getMessage().contains("secret"));
+            assertFalse(error.getMessage().contains("sensitive-value"));
+            assertNull(error.getCause(), "numeric parser causes must not expose the invalid value");
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"maxResponseBytes,2147483648,2147483647", "maxNestingDepth,129,128"})
+    void decodeLimitsRejectOutOfRangeValues(String key, String value, String maximum) {
+        QuackException error = assertThrows(QuackException.class,
+                () -> QuackUri.parse("jdbc:quack://h?" + key + "=" + value).decodeLimits());
+        assertTrue(error.getMessage().contains(key));
+        assertTrue(error.getMessage().endsWith(maximum));
     }
 
     @Test

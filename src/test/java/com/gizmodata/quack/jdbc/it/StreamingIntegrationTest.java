@@ -21,10 +21,12 @@ import java.sql.Statement;
 import java.sql.Struct;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -60,6 +62,58 @@ public class StreamingIntegrationTest {
 
     private QuackConnection connect() throws SQLException {
         return (QuackConnection) DriverManager.getConnection(server.jdbcUrl());
+    }
+
+    @Test
+    void decodeLimitsAllowLargeValuesAndCanBeTunedPerConnection() throws Exception {
+        String sql = "SELECT repeat('x', 1000000) AS text, repeat('y', 1000000)::BLOB AS bytes, range(20000) AS items";
+        try (Connection c = connect(); Statement s = c.createStatement(); ResultSet rs = s.executeQuery(sql)) {
+            assertTrue(rs.next());
+            assertEquals("x".repeat(1_000_000), rs.getString(1));
+            byte[] bytes = rs.getBytes(2);
+            assertEquals(1_000_000, bytes.length);
+            for (byte value : bytes) assertEquals((byte) 'y', value);
+            Object[] items = (Object[]) rs.getArray(3).getArray();
+            assertEquals(20_000, items.length);
+            for (int i = 0; i < items.length; i++) assertEquals((long) i, items[i]);
+        }
+        for (String property : new String[]{"maxResponseBytes", "maxDecodedBytes"}) {
+            Properties limits = new Properties();
+            limits.setProperty(property, "65536");
+            try (Connection c = DriverManager.getConnection(server.jdbcUrl(), limits); Statement s = c.createStatement()) {
+                SQLException error = assertThrows(SQLException.class, () -> s.executeQuery(sql));
+                assertTrue(error.getMessage().contains(property), error.getMessage());
+            }
+            limits.setProperty(property, "33554432");
+            try (Connection c = DriverManager.getConnection(server.jdbcUrl(), limits);
+                 Statement s = c.createStatement(); ResultSet rs = s.executeQuery(sql)) {
+                assertTrue(rs.next());
+                assertEquals(1_000_000, rs.getString(1).length());
+            }
+        }
+    }
+
+    @Test
+    void largerFetchBatchesRemainWithinDefaultDecodeLimits() throws Exception {
+        try (QuackConnection c = connect(); Statement s = c.createStatement()) {
+            s.execute("SET quack_fetch_batch_chunks=24");
+            try (QuackSession.Cursor cursor = c.session().cursor(
+                    "SELECT i, TIMESTAMP '2026-01-01' + i * INTERVAL '1 second' FROM range(100000) t(i)")) {
+                assertTrue(cursor.materializedRowCount() < 100_000);
+                LocalDateTime start = LocalDateTime.of(2026, 1, 1, 0, 0);
+                try (ResultSet rs = new QuackResultSet(null, cursor)) {
+                    long row = 0;
+                    while (rs.next()) {
+                        assertEquals(row, rs.getLong(1));
+                        assertEquals(start.plusSeconds(row), rs.getObject(2));
+                        row++;
+                    }
+                    assertEquals(100_000, row);
+                }
+            } finally {
+                s.execute("RESET quack_fetch_batch_chunks");
+            }
+        }
     }
 
     @Test

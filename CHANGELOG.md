@@ -47,6 +47,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   for tuple reads and APPEND inputs; named STRUCTs retain maps. Top-level JDBC
   tuples return `Struct` with native-compatible type names. Missing or extra
   STRUCT child vectors are rejected instead of exposing incomplete values.
+- **B12/B32:** Response decoding now has configurable per-message wire-size,
+  allocation, and nesting limits, including compressed-vector expansion and
+  nested collections. HTTP bodies are bounded and closed on failure without
+  replaying requests. Vector cardinalities, LIST bounds, ARRAY/byte products,
+  and LEB128 terminal bits are validated before unsafe allocation or access.
+  Existing constructors retain default limits; see README for configuration
+  and memory-accounting limitations. Whole-body deadlines remain separate work.
 
 Review IDs and verification details are recorded in [CODE_REVIEW.md](CODE_REVIEW.md).
 Other findings remain open; the review records current resolution status.

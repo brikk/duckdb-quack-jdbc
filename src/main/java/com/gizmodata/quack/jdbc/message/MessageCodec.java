@@ -3,6 +3,7 @@ package com.gizmodata.quack.jdbc.message;
 import com.gizmodata.quack.jdbc.QuackProtocolException;
 import com.gizmodata.quack.jdbc.codec.BinaryReader;
 import com.gizmodata.quack.jdbc.codec.BinaryWriter;
+import com.gizmodata.quack.jdbc.codec.DecodeLimits;
 import com.gizmodata.quack.jdbc.codec.HugeIntParts;
 import com.gizmodata.quack.jdbc.codec.QuackConstants;
 import com.gizmodata.quack.jdbc.type.LogicalType;
@@ -25,7 +26,11 @@ public final class MessageCodec {
     }
 
     public static QuackMessage decode(byte[] bytes) {
-        BinaryReader reader = new BinaryReader(bytes);
+        return decode(bytes, DecodeLimits.DEFAULT);
+    }
+
+    public static QuackMessage decode(byte[] bytes, DecodeLimits limits) {
+        BinaryReader reader = new BinaryReader(bytes, limits);
         DecodedHeader decoded = decodeHeader(reader);
         QuackMessage message = decodeBody(reader, decoded);
         reader.assertEof();

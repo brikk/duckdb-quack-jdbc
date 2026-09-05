@@ -17,11 +17,61 @@ public final class BinaryReader {
     private static final BigInteger TWO_POW_64 = BigInteger.ONE.shiftLeft(64);
 
     private final byte[] bytes;
+    private final Budget budget;
     private int offset;
 
     public BinaryReader(byte[] bytes) {
+        this(bytes, DecodeLimits.DEFAULT);
+    }
+
+    public BinaryReader(byte[] bytes, DecodeLimits limits) {
+        this(bytes, new Budget(limits));
+    }
+
+    private BinaryReader(byte[] bytes, Budget budget) {
+        if (bytes.length > budget.limits.maxResponseBytes()) {
+            throw new QuackProtocolException("Input exceeds maxResponseBytes");
+        }
         this.bytes = bytes;
-        this.offset = 0;
+        this.budget = budget;
+    }
+
+    /** A payload reader shares the parent message's allocation and active nesting budget. */
+    public BinaryReader subReader(byte[] payload) {
+        reserve(64);
+        return new BinaryReader(payload, budget);
+    }
+
+    /** Reserve before allocating; consumed allowance is not refunded after temporary objects die. */
+    public void reserve(long bytes) {
+        if (bytes < 0 || bytes > budget.remaining) {
+            throw new QuackProtocolException("Decoded allocation exceeds maxDecodedBytes");
+        }
+        budget.remaining -= bytes;
+    }
+
+    /** Includes inline compressed-vector descent, which does not introduce another wire object. */
+    public <T> T nested(Supplier<T> body) {
+        if (budget.depth >= budget.limits.maxNestingDepth()) {
+            throw new QuackProtocolException("Decoding exceeds maxNestingDepth");
+        }
+        budget.depth++;
+        try {
+            return body.get();
+        } finally {
+            budget.depth--;
+        }
+    }
+
+    private static final class Budget {
+        private final DecodeLimits limits;
+        private long remaining;
+        private int depth;
+
+        private Budget(DecodeLimits limits) {
+            this.limits = java.util.Objects.requireNonNull(limits);
+            this.remaining = limits.maxDecodedBytes();
+        }
     }
 
     public int position() {
@@ -43,9 +93,12 @@ public final class BinaryReader {
     }
 
     public <T> T readObject(Supplier<T> body) {
-        T result = body.get();
-        readEndObject();
-        return result;
+        return nested(() -> {
+            reserve(128);
+            T result = body.get();
+            readEndObject();
+            return result;
+        });
     }
 
     public void readEndObject() {
@@ -97,6 +150,7 @@ public final class BinaryReader {
             throw new QuackProtocolException("Invalid byte length " + length);
         }
         ensure(length);
+        reserve(16L + length);
         byte[] out = new byte[length];
         System.arraycopy(bytes, offset, out, 0, length);
         offset += length;
@@ -117,6 +171,9 @@ public final class BinaryReader {
         int shift = 0;
         for (int i = 0; i < 10; i++) {
             int b = readByte();
+            if (i == 9 && b != 0 && b != 1) {
+                throw new QuackProtocolException("Unsigned LEB128 value exceeds 64 bits");
+            }
             result |= ((long) (b & 0x7F)) << shift;
             if ((b & 0x80) == 0) {
                 return result;
@@ -138,6 +195,7 @@ public final class BinaryReader {
 
     /** Read an unsigned LEB128 integer as {@code BigInteger} (always non-negative). */
     public BigInteger readUlebBigInteger() {
+        reserve(192);
         long value = readUlebLong();
         BigInteger out = BigInteger.valueOf(value);
         if (value < 0L) {
@@ -153,6 +211,9 @@ public final class BinaryReader {
         int b = 0;
         for (int i = 0; i < 10; i++) {
             b = readByte();
+            if (i == 9 && b != 0 && b != 0x7F) {
+                throw new QuackProtocolException("Signed LEB128 value exceeds 64 bits");
+            }
             result |= ((long) (b & 0x7F)) << shift;
             shift += 7;
             if ((b & 0x80) == 0) {
@@ -166,7 +227,9 @@ public final class BinaryReader {
     }
 
     public String readString() {
-        return new String(readStringBytes(), StandardCharsets.UTF_8);
+        byte[] raw = readStringBytes();
+        reserve(64L + 4L * raw.length);
+        return new String(raw, StandardCharsets.UTF_8);
     }
 
     public byte[] readStringBytes() {
@@ -179,8 +242,24 @@ public final class BinaryReader {
         return readBytes(length);
     }
 
-    public <T> List<T> readList(ListElementReader<T> reader) {
+    public byte[] readBlob(int expectedLength) {
         int length = readUlebInt();
+        if (expectedLength < 0 || length != expectedLength) {
+            throw new QuackProtocolException("Blob has " + length + " bytes, expected " + expectedLength);
+        }
+        return readBytes(length);
+    }
+
+    public <T> List<T> readList(ListElementReader<T> reader) {
+        return readList(-1, reader);
+    }
+
+    public <T> List<T> readList(int expectedLength, ListElementReader<T> reader) {
+        int length = readUlebInt();
+        if (expectedLength < -1 || (expectedLength >= 0 && length != expectedLength)) {
+            throw new QuackProtocolException("List has " + length + " elements, expected " + expectedLength);
+        }
+        reserve(32L + 16L * length);
         List<T> out = new ArrayList<>(length);
         for (int i = 0; i < length; i++) {
             out.add(reader.read(i));
@@ -193,6 +272,7 @@ public final class BinaryReader {
     }
 
     public HugeIntParts readHugeInt() {
+        reserve(32);
         long upper = readSlebLong();
         long lower = readUlebLong();
         return new HugeIntParts(upper, lower);
@@ -263,7 +343,7 @@ public final class BinaryReader {
     }
 
     private void ensure(int length) {
-        if (offset + length > bytes.length) {
+        if (length < 0 || length > remaining()) {
             throw new QuackProtocolException("Unexpected end of input at offset " + offset
                     + "; needed " + length + " byte(s), have " + remaining());
         }
