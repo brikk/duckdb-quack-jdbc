@@ -23,16 +23,31 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Time;
 import java.sql.Timestamp;
+import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.time.format.ResolverStyle;
+import java.time.temporal.ChronoField;
+import java.util.Calendar;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 public final class QuackResultSet extends SkeletalResultSet {
+
+    private static final DateTimeFormatter JDBC_DATE = DateTimeFormatter.ofPattern("uuuu-M-d")
+            .withResolverStyle(ResolverStyle.STRICT);
+    private static final DateTimeFormatter JDBC_TIME = new DateTimeFormatterBuilder()
+            .appendPattern("H:m:s").appendFraction(ChronoField.NANO_OF_SECOND, 0, 9, true)
+            .toFormatter().withResolverStyle(ResolverStyle.STRICT);
+    private static final DateTimeFormatter JDBC_TIMESTAMP = new DateTimeFormatterBuilder()
+            .append(JDBC_DATE).appendLiteral(' ').append(JDBC_TIME)
+            .toFormatter().withResolverStyle(ResolverStyle.STRICT);
 
     private final Statement statement;
     private final QuackSession.Cursor cursor;
@@ -228,6 +243,22 @@ public final class QuackResultSet extends SkeletalResultSet {
     }
     @Override public Date getDate(String columnLabel) throws SQLException { return getDate(findColumn(columnLabel)); }
 
+    @Override public Date getDate(int columnIndex, Calendar cal) throws SQLException {
+        if (cal == null) return getDate(columnIndex);
+        Object v = rawValue(columnIndex);
+        if (v == null) return null;
+        LocalDate date;
+        if (v instanceof LocalDate ld) date = ld;
+        else if (v instanceof LocalDateTime ldt) date = ldt.toLocalDate();
+        else if (v instanceof OffsetDateTime odt) date = CalendarConversion.toLocalDateTime(odt.toInstant(), cal).toLocalDate();
+        else {
+            try { date = LocalDate.parse(v.toString(), JDBC_DATE); }
+            catch (DateTimeException e) { throw new SQLException("Cannot convert value to Date", e); }
+        }
+        return new Date(CalendarConversion.toInstant(date.atStartOfDay(), cal).toEpochMilli());
+    }
+    @Override public Date getDate(String columnLabel, Calendar cal) throws SQLException { return getDate(findColumn(columnLabel), cal); }
+
     @Override public Time getTime(int columnIndex) throws SQLException {
         Object v = rawValue(columnIndex);
         if (v == null) return null;
@@ -236,6 +267,21 @@ public final class QuackResultSet extends SkeletalResultSet {
         return Time.valueOf(v.toString());
     }
     @Override public Time getTime(String columnLabel) throws SQLException { return getTime(findColumn(columnLabel)); }
+
+    @Override public Time getTime(int columnIndex, Calendar cal) throws SQLException {
+        if (cal == null) return getTime(columnIndex);
+        Object v = rawValue(columnIndex);
+        if (v == null) return null;
+        LocalTime time;
+        if (v instanceof LocalTime lt) time = lt;
+        else if (v instanceof LocalDateTime ldt) time = ldt.toLocalTime();
+        else {
+            try { time = LocalTime.parse(v.toString(), JDBC_TIME); }
+            catch (DateTimeException e) { throw new SQLException("Cannot convert value to Time", e); }
+        }
+        return new Time(CalendarConversion.toInstant(time.atDate(LocalDate.ofEpochDay(0)), cal).toEpochMilli());
+    }
+    @Override public Time getTime(String columnLabel, Calendar cal) throws SQLException { return getTime(findColumn(columnLabel), cal); }
 
     @Override public Timestamp getTimestamp(int columnIndex) throws SQLException {
         Object v = rawValue(columnIndex);
@@ -246,6 +292,22 @@ public final class QuackResultSet extends SkeletalResultSet {
         return Timestamp.valueOf(v.toString());
     }
     @Override public Timestamp getTimestamp(String columnLabel) throws SQLException { return getTimestamp(findColumn(columnLabel)); }
+
+    @Override public Timestamp getTimestamp(int columnIndex, Calendar cal) throws SQLException {
+        if (cal == null) return getTimestamp(columnIndex);
+        Object v = rawValue(columnIndex);
+        if (v == null) return null;
+        if (v instanceof OffsetDateTime odt) return Timestamp.from(odt.toInstant());
+        LocalDateTime timestamp;
+        if (v instanceof LocalDateTime ldt) timestamp = ldt;
+        else if (v instanceof LocalDate ld) timestamp = ld.atStartOfDay();
+        else {
+            try { timestamp = LocalDateTime.parse(v.toString().trim(), JDBC_TIMESTAMP); }
+            catch (DateTimeException e) { throw new SQLException("Cannot convert value to Timestamp", e); }
+        }
+        return Timestamp.from(CalendarConversion.toInstant(timestamp, cal));
+    }
+    @Override public Timestamp getTimestamp(String columnLabel, Calendar cal) throws SQLException { return getTimestamp(findColumn(columnLabel), cal); }
 
     @Override public Object getObject(int columnIndex) throws SQLException {
         Object v = rawValue(columnIndex);

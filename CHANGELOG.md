@@ -36,6 +36,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   preventing null TIME, TIME_NS, and TIMESTAMP_S values from failing on server
   sentinel bytes. Covers compressed, nested, and streamed results while
   preserving validation of payload lengths and non-null values.
+- **B11:** Calendar-aware Date/Time/Timestamp getters and setters now honor the
+  supplied timezone without passing through the JVM default zone. Timestamp
+  reads retain nanoseconds; binds retain the existing microsecond precision.
+  TIMESTAMPTZ reads preserve their instant. Custom timezone rules, DST
+  leniency, epoch-anchored times, and SQL's proleptic Gregorian fields are
+  respected without mutating caller objects. Null Calendar behavior is unchanged.
 
 Review IDs and verification details are recorded in [CODE_REVIEW.md](CODE_REVIEW.md).
 Other findings remain open; the review records current resolution status.

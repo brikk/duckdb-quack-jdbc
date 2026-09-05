@@ -303,6 +303,30 @@ GizmoData roadmap.
   commit/rollback. Independently created `QuackSession` instances retain
   caller-managed transaction behavior.
 
+### Calendar-aware temporal values
+
+The `Calendar` overloads of `getDate`, `getTime`, `getTimestamp`, `setDate`,
+`setTime`, and `setTimestamp` use the supplied timezone for supported temporal
+conversions. Zone-less timestamps are interpreted in that timezone on reads;
+timestamp instants are projected into local SQL fields on binds. Reading a
+`TIMESTAMPTZ` as `Timestamp` always preserves its instant, regardless of Calendar
+or server timezone. Binding a `Timestamp` still produces SQL `TIMESTAMP`, not
+`TIMESTAMPTZ`; a subsequent server-side cast uses the server session timezone.
+
+Calendar-aware Date reads use local midnight. Time reads use local 1970-01-01
+as the date anchor, not the Calendar's current date. The Calendar provides its
+actual timezone rules and leniency; SQL fields remain proleptic Gregorian even
+with a non-Gregorian Calendar. Lenient reads advance through DST gaps; strict
+Calendars reject nonexistent local times with `SQLException`. Ambiguous times
+use the later occurrence. Caller-owned Calendars and values are not mutated.
+
+Timestamp reads preserve nanoseconds, while timestamp literals retain the
+driver's existing microsecond precision. Calendar-aware Time conversions retain
+milliseconds; use `LocalTime` via `getObject` for full fractional precision.
+A null Calendar delegates to the existing no-Calendar overload unchanged.
+These semantics deliberately differ from native duckdb-jdbc 1.5.5.0's ignored
+Date/Time calendars, lost timestamp bind fractions, and shifted TIMESTAMPTZ reads.
+
 ## Credits
 
 - Wire-format codec ported clean-room from

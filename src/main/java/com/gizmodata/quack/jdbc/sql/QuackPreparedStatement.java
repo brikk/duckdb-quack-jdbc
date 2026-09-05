@@ -24,6 +24,7 @@ import java.sql.SQLType;
 import java.sql.SQLXML;
 import java.sql.Time;
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -272,9 +273,18 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
     @Override public void setDate(int i, Date x) throws SQLException { setParam(i, x == null ? null : x.toLocalDate()); }
     @Override public void setTime(int i, Time x) throws SQLException { setParam(i, x == null ? null : x.toLocalTime()); }
     @Override public void setTimestamp(int i, Timestamp x) throws SQLException { setParam(i, x == null ? null : x.toLocalDateTime()); }
-    @Override public void setDate(int i, Date x, Calendar cal) throws SQLException { setDate(i, x); }
-    @Override public void setTime(int i, Time x, Calendar cal) throws SQLException { setTime(i, x); }
-    @Override public void setTimestamp(int i, Timestamp x, Calendar cal) throws SQLException { setTimestamp(i, x); }
+    @Override public void setDate(int i, Date x, Calendar cal) throws SQLException {
+        if (cal == null || x == null) setDate(i, x);
+        else setParam(i, CalendarConversion.toLocalDateTime(Instant.ofEpochMilli(x.getTime()), cal).toLocalDate());
+    }
+    @Override public void setTime(int i, Time x, Calendar cal) throws SQLException {
+        if (cal == null || x == null) setTime(i, x);
+        else setParam(i, CalendarConversion.toLocalDateTime(Instant.ofEpochMilli(x.getTime()), cal).toLocalTime());
+    }
+    @Override public void setTimestamp(int i, Timestamp x, Calendar cal) throws SQLException {
+        if (cal == null || x == null) setTimestamp(i, x);
+        else setParam(i, CalendarConversion.toLocalDateTime(x.toInstant(), cal));
+    }
     @Override public void setObject(int i, Object x) throws SQLException { setParam(i, x); }
     @Override public void setObject(int i, Object x, int targetSqlType) throws SQLException { setParam(i, x); }
     @Override public void setObject(int i, Object x, int targetSqlType, int scaleOrLength) throws SQLException { setParam(i, x); }

@@ -8,17 +8,24 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.condition.EnabledIf;
+import org.junit.jupiter.api.parallel.Isolated;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.sql.Array;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Timestamp;
 import java.sql.Types;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.util.Calendar;
+import java.util.TimeZone;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -27,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Tag("integration")
 @Tag("oracle")
+@Isolated("Changes the JVM default timezone")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @EnabledIf("com.gizmodata.quack.jdbc.it.QuackIntegrationTest#duckdbAvailable")
 public class OracleParityIntegrationTest {
@@ -146,6 +154,33 @@ public class OracleParityIntegrationTest {
                     }
                 }
             }
+        }
+    }
+
+    @Test
+    void ordinaryCalendarTimestampConversionsMatchNative() throws Exception {
+        TimeZone original = TimeZone.getDefault();
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+            Calendar la = Calendar.getInstance(TimeZone.getTimeZone("America/Los_Angeles"));
+            Calendar tokyo = Calendar.getInstance(TimeZone.getTimeZone("Asia/Tokyo"));
+            for (Connection c : new Connection[]{quack, oracle}) {
+                try (Statement s = c.createStatement();
+                     ResultSet rs = s.executeQuery("SELECT TIMESTAMP '2024-01-02 03:04:05.123456' AS v")) {
+                    assertTrue(rs.next());
+                    assertEquals(Instant.parse("2024-01-02T11:04:05.123456Z"), rs.getTimestamp("v", la).toInstant());
+                }
+                // Native's Calendar setter loses sub-millisecond digits, so parity is limited here.
+                try (PreparedStatement ps = c.prepareStatement("SELECT ? AS v")) {
+                    ps.setTimestamp(1, Timestamp.from(Instant.parse("2026-01-01T00:00:00.123Z")), tokyo);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertTrue(rs.next());
+                        assertEquals(LocalDateTime.parse("2026-01-01T09:00:00.123"), rs.getObject(1, LocalDateTime.class));
+                    }
+                }
+            }
+        } finally {
+            TimeZone.setDefault(original);
         }
     }
 

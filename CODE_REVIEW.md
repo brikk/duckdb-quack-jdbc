@@ -2,7 +2,7 @@
 
 Reviewed 2026-09-05 at `/home/jayson/DEV/brikk/fork-quack-jdbc`, version `0.7.0-SNAPSHOT`.
 
-This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Approved implementation passes resolve B1-B6, B8, B9, and B10; resolution notes and V5-V7 record the scope and verification. Earlier fixes were committed as af771d2; B8 is a subsequent separate fix. Existing changes to `CLAUDE.md` and `DUCKDB_COMPATIBILITY.md` were preserved.
+This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Approved implementation passes resolve B1-B6 and B8-B11; resolution notes and V5-V8 record the scope and verification. Earlier fixes were committed as af771d2, followed by B8 as 5f366ac; B11 is a subsequent separate fix. Existing changes to `CLAUDE.md` and `DUCKDB_COMPATIBILITY.md` were preserved.
 
 All source references below are relative to the repository root. `sql/`, `message/`, `codec/`, `type/`, and `transport/` abbreviate directories under `src/main/java/com/gizmodata/quack/jdbc/`. Original finding line numbers refer to the reviewed baseline; subsequent edits may shift them. Keep the original evidence alongside resolution notes.
 
@@ -17,7 +17,7 @@ Use these IDs in requests, changes, tests, and follow-up discussions, for exampl
 | C | C1-C4 | Native-parity observations requiring a compatibility decision before changes |
 | I | I1-I9 | Build, testing, and engineering improvements |
 | S | S1-S8 | Strengths to preserve, not implementation tasks |
-| V | V1-V7 | Verification evidence and limitations, not implementation tasks |
+| V | V1-V8 | Verification evidence and limitations, not implementation tasks |
 
 IDs are permanent and independent of severity, priority rank, and document order. B1-B40 match the original full report's numbered findings, not the shorter chat summary's numbering. Never renumber or reuse an ID; record resolution under the existing item and append new IDs for new findings. If an item needs separate work units, retain its parent ID and introduce suffixes such as B4a and B4b.
 
@@ -120,6 +120,12 @@ Connecting to `/review_other` reports that catalog from getCatalog while current
 Location: `sql/SkeletalResultSet.java:113-118`; `sql/QuackPreparedStatement.java:191-196`.
 
 With JVM zone UTC, retrieving timestamp `2024-01-02 03:04:05.123456` using an America/Los_Angeles Calendar yields 03:04:05Z instead of the 11:04:05Z returned by native JDBC. Binding instant 2026-01-01T00:00Z with a GMT+09 Calendar likewise stores 00:00 instead of 09:00. Implement the requested calendar interpretation and preserve fractional precision. Date/Time overloads also discard the argument; review their contracts separately rather than assuming native behavior is perfect. Timestamp examples confirmed.
+
+**Resolution (2026-09-05): resolved.** QuackResultSet's Calendar overloads now interpret decoded local fields directly, without a lossy conversion through the JVM default timezone; label overloads delegate to the indexed versions. QuackPreparedStatement's Calendar setters project the input instant into local SQL fields at bind time. A package-private CalendarConversion helper shares the inverse conversions and honors actual TimeZone rules, including custom IDs and modified offsets. Calendar timezone and leniency apply to SQL's proleptic Gregorian fields, not the caller's calendar system or Gregorian cutover. Caller-owned values and Calendars are not mutated; null Calendars retain the existing no-Calendar behavior.
+
+Timestamp reads preserve nanoseconds, including negative epochs; binds retain the existing SQL TIMESTAMP microsecond precision without a new millisecond truncation. TIMESTAMPTZ-to-Timestamp reads preserve the stored instant. Date reads construct local midnight; Time reads anchor local fields to 1970-01-01 and retain representable milliseconds. Lenient Calendar reads advance through DST gaps; non-lenient Calendars reject nonexistent local times with SQLException; overlaps use the later occurrence. String parsing rejects invalid fields instead of normalizing them before Calendar validation. General no-Calendar conversion behavior, nanosecond binding expansion, B29/B30 boundary/special-value handling, and B35 getTime(TIMESTAMPTZ) remain outside this pass.
+
+Tests: eight new QuackResultSetConversionTest methods, five CalendarTemporalIntegrationTest methods, and one OracleParityIntegrationTest method cover index/label access, nulls/wasNull, three JVM zones, two server zones, DST gaps/overlaps and non-hour transitions, custom TimeZone rules, non-Gregorian Calendars, pre-cutover round trips, negative epochs, timestamp units/fractions, input immutability, and bind-time snapshots. Native parity is asserted for the original ordinary timestamp examples. Deliberately not copied: native 1.5.5.0's ignored Date/Time Calendars, millisecond-only Calendar timestamp binds, and shifted TIMESTAMPTZ reads. Explicit expected instants establish those contracts. See V8 and README's Calendar-aware temporal guidance.
 
 ### B12. Small malformed inputs can trigger JVM resource failures [P1]
 
@@ -366,11 +372,11 @@ Probe artifacts are under `/tmp/opencode/quack-statement-audit/`, `/tmp/opencode
 
 ### V3. Verification limits
 
-The original review did not execute publication workflows or contact production servers, and no DBeaver UI compatibility certification is implied. V1-V2 describe that review. V5-V7 separately record approved implementation passes; they do not constitute verification of every remaining open finding. The later user-requested push of af771d2 triggered the repository's normal CI and snapshot workflows.
+The original review did not execute publication workflows or contact production servers, and no DBeaver UI compatibility certification is implied. V1-V2 describe that review. V5-V8 separately record approved implementation passes; they do not constitute verification of every remaining open finding. The later user-requested push of af771d2 triggered the repository's normal CI and snapshot workflows.
 
 ### V4. Workspace preservation
 
-At the end of the original review, git status showed only the pre-existing modified CLAUDE.md and untracked DUCKDB_COMPATIBILITY.md. Those files remain untouched by the review and implementation. The earlier approved fixes, tests, and documentation were committed and pushed as af771d2 at the user's request. B8 was implemented subsequently and prepared as a separate user-requested commit, excluding those pre-existing changes.
+At the end of the original review, git status showed only the pre-existing modified CLAUDE.md and untracked DUCKDB_COMPATIBILITY.md. Those files remain untouched by the review and implementation. The earlier approved fixes, tests, and documentation were committed and pushed as af771d2 at the user's request, followed by B8 as 5f366ac. B11 was implemented subsequently and prepared as a separate user-requested commit, excluding those pre-existing changes.
 
 ### V5. Approved implementation verification
 
@@ -416,6 +422,18 @@ QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn 
 
 Result: BUILD SUCCESS; 199 tests reported, zero failures, zero errors, one existing IPv6 availability skip. All integration suites ran against released DuckDB 1.5.5 with native oracle 1.5.5.0. Java runtime 21.0.2; Java 17 compilation target. `git diff --check` passed. Built artifact: `target/quack-jdbc-0.7.0-SNAPSHOT.jar`. The pre-existing CLAUDE.md and DUCKDB_COMPATIBILITY.md changes remain untouched and excluded from the B8 changes.
 
+### V8. B11 Calendar conversion verification
+
+Approved follow-up: B11 only. Added fourteen regression methods. The initial targeted run failed six tests on the original ignored-Calendar behavior before production changes. The completed targeted oracle run passed all 19 tests with `-Duser.timezone=America/Los_Angeles`; tests also switch between UTC, Los Angeles, and Apia internally and restore the original timezone. Timezone-changing test classes are isolated from concurrent JUnit execution. Independent review identified chronology and permissive-parser gaps; both were fixed and covered by additional regressions, with no remaining actionable B11 findings on re-review.
+
+Full build on 2026-09-05:
+
+```bash
+QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn --batch-mode --no-transfer-progress -Poracle clean verify
+```
+
+Result: BUILD SUCCESS; 213 tests reported, zero failures, zero errors, one existing IPv6 availability skip. All integration suites ran against released DuckDB 1.5.5 with native oracle 1.5.5.0. Java runtime 21.0.2; Java 17 compilation target. Built artifact: `target/quack-jdbc-0.7.0-SNAPSHOT.jar`. No new runtime dependencies or public APIs. Pre-existing CLAUDE.md and DUCKDB_COMPATIBILITY.md changes remain untouched and excluded from the B11 changes.
+
 ## Top Five Priorities
 
 This is the original approved implementation order, now completed as recorded under each ID and V5. It is retained for traceability, not presented as five outstanding tasks. The ranking prioritized security exposure and the risk of silently persisting incorrect data or violating rollback expectations, not ease of implementation. Original complexity estimates included a complete fix and targeted regression tests; they were not elapsed-time commitments. Low meant localized conversion/validation work, Medium coordinated paths and a boundary-test matrix, and High substantial semantic or API-design risk.
@@ -428,4 +446,4 @@ This is the original approved implementation order, now completed as recorded un
 | 4 | B10 | Select and validate the URL catalog | Low-Medium | Unqualified writes can reach the wrong database. Initialize the server catalog before caching it, handle failed initialization cleanup, and test attached, nonexistent, and quoted catalog names. |
 | 5 | B4 | Preserve exact numeric conversions | Low-Medium | Affects common BIGINT/DECIMAL reads and decimal writes. Remove floating-point and long intermediates for exact values; test large positive/negative integers, scales, and typed BigInteger retrieval. |
 
-These ranks do not change any finding's ID. Approved follow-ups have also resolved B6 and B2+B3 (V6), then B8 (V7). B7, B11, and B12 remain P1 work, not optional follow-ups. Use I4-I6 to broaden regression coverage, address JDBC execution/lifecycle and deadlines (B13-B22), resolve remaining metadata/value alignment (B23 and C1-C4), and promote verification into CI (I1-I3). Track remaining cleanup and performance work using L1-L6 and I7-I9.
+These ranks do not change any finding's ID. Approved follow-ups have also resolved B6 and B2+B3 (V6), B8 (V7), and B11 (V8). B7 and B12 remain P1 work, not optional follow-ups. Use I4-I6 to broaden regression coverage, address JDBC execution/lifecycle and deadlines (B13-B22), resolve remaining metadata/value alignment (B23 and C1-C4), and promote verification into CI (I1-I3). Track remaining cleanup and performance work using L1-L6 and I7-I9.
