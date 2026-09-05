@@ -8,13 +8,20 @@ import com.gizmodata.quack.jdbc.type.ChildType;
 import com.gizmodata.quack.jdbc.type.ExtraTypeInfo;
 import com.gizmodata.quack.jdbc.type.LogicalType;
 import com.gizmodata.quack.jdbc.type.LogicalTypeId;
+import com.gizmodata.quack.jdbc.type.PhysicalTypeUtil;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -174,6 +181,89 @@ class VectorEncodingDecodeTest {
         DecodedVector v = decode(UBIGINT, 0, w.toByteArray());
         assertInstanceOf(DecodedVector.ObjectVec.class, v);
         assertEquals(0, v.size());
+    }
+
+    @Test
+    void nullFixedWidthSlotsAreNotConvertedInFlatConstantOrDictionaryVectors() {
+        LocalDateTime epoch = LocalDateTime.of(1970, 1, 1, 0, 0);
+        Object[][] cases = {
+                {LogicalType.of(LogicalTypeId.TIME), LocalTime.MIDNIGHT},
+                {LogicalType.of(LogicalTypeId.TIME_NS), LocalTime.MIDNIGHT},
+                {LogicalType.of(LogicalTypeId.TIMESTAMP_SEC), epoch},
+                {LogicalType.of(LogicalTypeId.TIMESTAMP_MS), epoch},
+                {LogicalType.of(LogicalTypeId.TIMESTAMP), epoch},
+                {LogicalType.of(LogicalTypeId.TIMESTAMP_NS), epoch},
+                {LogicalType.of(LogicalTypeId.TIMESTAMP_TZ), OffsetDateTime.parse("1970-01-01T00:00:00Z")},
+                {LogicalType.of(LogicalTypeId.DATE), LocalDate.ofEpochDay(0)},
+                {LogicalType.decimal(4, 2), new BigDecimal("0.00")},
+                {LogicalType.decimal(9, 2), new BigDecimal("0.00")},
+                {LogicalType.decimal(18, 2), new BigDecimal("0.00")},
+                {LogicalType.decimal(38, 2), new BigDecimal("0.00")},
+                {LogicalType.of(LogicalTypeId.ENUM,
+                        new ExtraTypeInfo.EnumInfo(List.of("zero"), Optional.empty())), "zero"},
+                {LogicalType.of(LogicalTypeId.UUID), new UUID(Long.MIN_VALUE, 0)},
+                {LogicalType.of(LogicalTypeId.INTERVAL), new IntervalValue(0, 0, 0)},
+                {UBIGINT, BigInteger.ZERO},
+                {LogicalType.of(LogicalTypeId.HUGEINT), BigInteger.ZERO},
+                {LogicalType.of(LogicalTypeId.UHUGEINT), BigInteger.ZERO}
+        };
+        for (Object[] sample : cases) {
+            LogicalType type = (LogicalType) sample[0];
+            int width = PhysicalTypeUtil.getPhysicalType(type).byteWidth();
+            for (VectorType encoding : new VectorType[]{VectorType.FLAT, VectorType.CONSTANT, VectorType.DICTIONARY}) {
+                int storedRows = encoding == VectorType.CONSTANT ? 1 : 4;
+                int[] selection = encoding == VectorType.DICTIONARY ? new int[]{1, 0, 3, 2, 1} : new int[]{0, 1, 2, 3};
+                byte[] payload = new byte[width * storedRows];
+                // Null payloads are unspecified. Use signed-min sentinels, including Long.MIN_VALUE.
+                for (int row = 0; row < storedRows; row += 2) payload[row * width + width - 1] = (byte) 0x80;
+                BinaryWriter w = new BinaryWriter();
+                w.writeObject(obj -> {
+                    obj.writeField(90, () -> obj.writeUleb(encoding.wireId()));
+                    if (encoding == VectorType.DICTIONARY) {
+                        obj.writeField(91, () -> obj.writeBlob(le32(selection)));
+                        obj.writeField(92, () -> obj.writeUleb(storedRows));
+                    }
+                    obj.writeField(100, () -> obj.writeBool(true));
+                    obj.writeField(101, () -> obj.writeBlob(new byte[]{
+                            (byte) (encoding == VectorType.CONSTANT ? 0 : 10), 0, 0, 0, 0, 0, 0, 0}));
+                    obj.writeField(102, () -> obj.writeBlob(payload));
+                });
+                BinaryReader reader = new BinaryReader(w.toByteArray());
+                DecodedVector vector = VectorCodec.decodeVector(reader, type, selection.length);
+                reader.assertEof();
+                assertEquals(selection.length, vector.size());
+                for (int row = 0; row < selection.length; row++) {
+                    boolean valid = encoding != VectorType.CONSTANT && selection[row] % 2 == 1;
+                    assertEquals(valid ? sample[1] : null, vector.getObject(row), type.id() + " " + encoding);
+                    assertEquals(!valid, vector.isNull(row));
+                }
+            }
+        }
+    }
+
+    @Test
+    void nullValidityDoesNotPermitTruncatedFixedWidthPayloads() {
+        BinaryWriter w = new BinaryWriter();
+        w.writeObject(obj -> {
+            obj.writeField(100, () -> obj.writeBool(true));
+            obj.writeField(101, () -> obj.writeBlob(new byte[8]));
+            obj.writeField(102, () -> obj.writeBlob(new byte[7]));
+        });
+        QuackProtocolException error = assertThrows(QuackProtocolException.class,
+                () -> decode(LogicalType.of(LogicalTypeId.TIME), 1, w.toByteArray()));
+        assertTrue(error.getMessage().contains("expected 8"));
+    }
+
+    @Test
+    void invalidNonNullValuesAreStillConvertedAndRejected() {
+        LogicalType type = LogicalType.of(LogicalTypeId.ENUM,
+                new ExtraTypeInfo.EnumInfo(List.of("zero"), Optional.empty()));
+        BinaryWriter w = new BinaryWriter();
+        w.writeObject(obj -> {
+            obj.writeField(100, () -> obj.writeBool(false));
+            obj.writeField(102, () -> obj.writeBlob(new byte[]{(byte) 0x80}));
+        });
+        assertThrows(QuackProtocolException.class, () -> decode(type, 1, w.toByteArray()));
     }
 
     @Test

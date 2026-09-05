@@ -437,9 +437,14 @@ public final class VectorCodec {
         // Logical types that materialize into non-primitive Java objects always go via ObjectVec.
         if (needsObjectMaterialization(type, physicalType)) {
             Object[] values = new Object[count];
+            int width = physicalType.byteWidth();
             for (int i = 0; i < count; i++) {
-                Object v = decodeFixedValue(reader, type, physicalType);
-                values[i] = Validity.isValid(validity, i) ? v : null;
+                if (Validity.isValid(validity, i)) {
+                    values[i] = decodeFixedValue(reader, type, physicalType);
+                } else {
+                    // Null payloads may be invalid logical values; consume only their raw bytes.
+                    for (int b = 0; b < width; b++) reader.readByte();
+                }
             }
             reader.assertEof();
             return new DecodedVector.ObjectVec(type, values);

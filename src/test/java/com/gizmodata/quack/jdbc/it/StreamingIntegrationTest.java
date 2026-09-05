@@ -18,6 +18,8 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -128,6 +130,34 @@ public class StreamingIntegrationTest {
             }
             assertEquals(rows, count);
             assertEquals(rows, cursor.materializedRowCount());
+        }
+    }
+
+    @Test
+    void nullTemporalValuesStayAlignedAcrossFetchBatches() throws Exception {
+        int rows = 100_000;
+        try (QuackConnection c = connect()) {
+            for (String[] sample : new String[][]{{"TIME", "12:34:56.123456"},
+                    {"TIME_NS", "12:34:56.123456789"}, {"TIMESTAMP_S", "2026-09-05 12:34:56"}}) {
+                String type = sample[0];
+                Object value = type.equals("TIMESTAMP_S")
+                        ? LocalDateTime.parse(sample[1].replace(' ', 'T')) : LocalTime.parse(sample[1]);
+                String sql = "SELECT CASE WHEN i % 2 = 0 THEN NULL ELSE '" + sample[1] + "'::" + type
+                        + " END AS v FROM range(100000) t(i) ORDER BY i";
+                try (QuackSession.Cursor cursor = c.session().cursor(sql);
+                     ResultSet rs = new QuackResultSet(null, cursor)) {
+                    assertTrue(cursor.materializedRowCount() > 0);
+                    assertTrue(cursor.materializedRowCount() < rows);
+                    int count = 0;
+                    while (rs.next()) {
+                        assertEquals(count % 2 == 0 ? null : value, rs.getObject(1), type);
+                        assertEquals(count % 2 == 0, rs.wasNull());
+                        count++;
+                    }
+                    assertEquals(rows, count);
+                    assertEquals(rows, cursor.materializedRowCount());
+                }
+            }
         }
     }
 

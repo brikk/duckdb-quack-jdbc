@@ -2,7 +2,7 @@
 
 Reviewed 2026-09-05 at `/home/jayson/DEV/brikk/fork-quack-jdbc`, version `0.7.0-SNAPSHOT`.
 
-This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Approved implementation passes resolve B1, B5, B9, B10, B4, B6, B2, and B3 in the working tree; resolution notes and V5-V6 record the scope and verification. Existing changes to `CLAUDE.md` and `DUCKDB_COMPATIBILITY.md` were preserved.
+This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Approved implementation passes resolve B1-B6, B8, B9, and B10; resolution notes and V5-V7 record the scope and verification. Earlier fixes were committed as af771d2; B8 is a subsequent separate fix. Existing changes to `CLAUDE.md` and `DUCKDB_COMPATIBILITY.md` were preserved.
 
 All source references below are relative to the repository root. `sql/`, `message/`, `codec/`, `type/`, and `transport/` abbreviate directories under `src/main/java/com/gizmodata/quack/jdbc/`. Original finding line numbers refer to the reviewed baseline; subsequent edits may shift them. Keep the original evidence alongside resolution notes.
 
@@ -17,7 +17,7 @@ Use these IDs in requests, changes, tests, and follow-up discussions, for exampl
 | C | C1-C4 | Native-parity observations requiring a compatibility decision before changes |
 | I | I1-I9 | Build, testing, and engineering improvements |
 | S | S1-S8 | Strengths to preserve, not implementation tasks |
-| V | V1-V6 | Verification evidence and limitations, not implementation tasks |
+| V | V1-V7 | Verification evidence and limitations, not implementation tasks |
 
 IDs are permanent and independent of severity, priority rank, and document order. B1-B40 match the original full report's numbered findings, not the shorter chat summary's numbering. Never renumber or reuse an ID; record resolution under the existing item and append new IDs for new findings. If an item needs separate work units, retain its parent ID and introduce suffixes such as B4a and B4b.
 
@@ -94,6 +94,10 @@ DuckDB tuples have empty field names. Storing their values in a map keyed by fie
 Location: `message/VectorCodec.java:439-442`.
 
 `SELECT NULL::TIME`, `NULL::TIME_NS`, and `NULL::TIMESTAMP_S` fail. The decoder attempts logical conversion of the signed null sentinel before replacing it with null; multiplication or temporal construction throws. Consume the fixed-width slot without logical conversion when invalid. Cover mixed null/non-null rows and nested/compressed vectors with server-produced null bytes. Self-round-trips miss this because the local encoder writes zero into null slots. Confirmed against 1.5.5.
+
+**Resolution (2026-09-05): resolved.** The fixed-width object decoder now checks validity before logical conversion. Invalid slots consume exactly their physical byte width without interpreting or allocating a value, preserving alignment for following rows. Valid values and the existing fixed-size payload-length checks are unchanged. No public API or new reader helper was added.
+
+Tests: VectorEncodingDecodeTest uses independent signed-min sentinel fixtures across 18 fixed-width logical types, physical widths 1/2/4/8/16, and FLAT/CONSTANT/DICTIONARY encodings. It also verifies that truncated all-null payloads and invalid non-null ENUM values remain rejected. NestedReadEdgeIntegrationTest covers null temporal scalars, mixed rows, JDBC wasNull/getter behavior, lists, fixed arrays, named structs, null structs, maps, and nested lists. StreamingIntegrationTest checks 100,000 alternating null/non-null rows for each of TIME, TIME_NS, and TIMESTAMP_S across actual FETCH batches. The new regressions reproduced the original errors before the fix. See V7. Calendar semantics (B11), temporal boundaries (B29), and special temporal values (B30) remain separate work.
 
 ### B9. The documented bulk append API bypasses manual transactions [P1]
 
@@ -362,11 +366,11 @@ Probe artifacts are under `/tmp/opencode/quack-statement-audit/`, `/tmp/opencode
 
 ### V3. Verification limits
 
-No publication workflows were executed, no production server was contacted, and no DBeaver UI compatibility certification is implied. V1-V2 describe the original review. V5-V6 separately record approved implementation passes; they do not constitute verification of every remaining open finding.
+The original review did not execute publication workflows or contact production servers, and no DBeaver UI compatibility certification is implied. V1-V2 describe that review. V5-V7 separately record approved implementation passes; they do not constitute verification of every remaining open finding. The later user-requested push of af771d2 triggered the repository's normal CI and snapshot workflows.
 
 ### V4. Workspace preservation
 
-At the end of the original review, git status showed only the pre-existing modified CLAUDE.md and untracked DUCKDB_COMPATIBILITY.md. Those files remain untouched by the review and implementation. The implementation changes driver code, targeted tests, README, CHANGELOG, and this report. No commit or publication was requested or performed.
+At the end of the original review, git status showed only the pre-existing modified CLAUDE.md and untracked DUCKDB_COMPATIBILITY.md. Those files remain untouched by the review and implementation. The earlier approved fixes, tests, and documentation were committed and pushed as af771d2 at the user's request. B8 was implemented subsequently and prepared as a separate user-requested commit, excluding those pre-existing changes.
 
 ### V5. Approved implementation verification
 
@@ -398,7 +402,19 @@ QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn 
 | Default clean verify | 189 | 0 | 0 | 1 |
 | Oracle verify | 193 | 0 | 0 | 1 |
 
-The sole skip is the existing IPv6 availability test; all integration suites ran. Runtime: Java 21.0.2, Java 17 compilation target, DuckDB CLI 1.5.5, native oracle 1.5.5.0. `git diff --check` passed. Built artifact remains `target/quack-jdbc-0.7.0-SNAPSHOT.jar`; no new runtime dependencies, commits, or publications. Resolved IDs now include B1-B6, B9, and B10; other findings remain open, with B23's numeric subset addressed by B3.
+The sole skip is the existing IPv6 availability test; all integration suites ran. Runtime: Java 21.0.2, Java 17 compilation target, DuckDB CLI 1.5.5, native oracle 1.5.5.0. `git diff --check` passed. Built artifact remained `target/quack-jdbc-0.7.0-SNAPSHOT.jar`, with no new runtime dependencies. These fixes were later included in the user-requested commit af771d2. At the end of this pass, resolved IDs were B1-B6, B9, and B10, with B23's numeric subset addressed by B3.
+
+### V7. B8 null-decoding verification
+
+Approved follow-up: B8 only. Added six regression test methods and changed only the null branch of fixed-width object decoding in production code. Before the fix, the new wire-fixture and live scalar/nested tests failed on the reported TIME sentinel overflow. After the fix, all targeted tests passed, including the unchanged payload-length and non-null-value validation checks.
+
+Full build on 2026-09-05:
+
+```bash
+QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn --batch-mode --no-transfer-progress -Poracle clean verify
+```
+
+Result: BUILD SUCCESS; 199 tests reported, zero failures, zero errors, one existing IPv6 availability skip. All integration suites ran against released DuckDB 1.5.5 with native oracle 1.5.5.0. Java runtime 21.0.2; Java 17 compilation target. `git diff --check` passed. Built artifact: `target/quack-jdbc-0.7.0-SNAPSHOT.jar`. The pre-existing CLAUDE.md and DUCKDB_COMPATIBILITY.md changes remain untouched and excluded from the B8 changes.
 
 ## Top Five Priorities
 
@@ -412,4 +428,4 @@ This is the original approved implementation order, now completed as recorded un
 | 4 | B10 | Select and validate the URL catalog | Low-Medium | Unqualified writes can reach the wrong database. Initialize the server catalog before caching it, handle failed initialization cleanup, and test attached, nonexistent, and quoted catalog names. |
 | 5 | B4 | Preserve exact numeric conversions | Low-Medium | Affects common BIGINT/DECIMAL reads and decimal writes. Remove floating-point and long intermediates for exact values; test large positive/negative integers, scales, and typed BigInteger retrieval. |
 
-These ranks do not change any finding's ID. The approved follow-up has also resolved B6 and B2+B3 (V6). B7, B8, B11, and B12 remain P1 work, not optional follow-ups. Use I4-I6 to broaden regression coverage, address JDBC execution/lifecycle and deadlines (B13-B22), resolve remaining metadata/value alignment (B23 and C1-C4), and promote verification into CI (I1-I3). Track remaining cleanup and performance work using L1-L6 and I7-I9.
+These ranks do not change any finding's ID. Approved follow-ups have also resolved B6 and B2+B3 (V6), then B8 (V7). B7, B11, and B12 remain P1 work, not optional follow-ups. Use I4-I6 to broaden regression coverage, address JDBC execution/lifecycle and deadlines (B13-B22), resolve remaining metadata/value alignment (B23 and C1-C4), and promote verification into CI (I1-I3). Track remaining cleanup and performance work using L1-L6 and I7-I9.

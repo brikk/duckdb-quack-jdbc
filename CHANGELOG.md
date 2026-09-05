@@ -32,6 +32,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   UBIGINT/HUGEINT/UHUGEINT report `Types.OTHER`. Numeric Java class names,
   precision, and display sizes match the represented range. Precision uses
   the actual 20/39/39-digit capacity rather than the native driver's 19/38/38.
+- **B8:** Fixed-width null slots are consumed without logical conversion,
+  preventing null TIME, TIME_NS, and TIMESTAMP_S values from failing on server
+  sentinel bytes. Covers compressed, nested, and streamed results while
+  preserving validation of payload lengths and non-null values.
 
 Review IDs and verification details are recorded in [CODE_REVIEW.md](CODE_REVIEW.md).
 Other findings remain open; the review records current resolution status.
