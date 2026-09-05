@@ -4,6 +4,7 @@ import com.gizmodata.quack.jdbc.message.IntervalValue;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.sql.Date;
 import java.sql.Time;
 import java.sql.Timestamp;
@@ -12,6 +13,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.HexFormat;
 import java.util.UUID;
 
 /**
@@ -45,7 +47,7 @@ public final class SqlLiteral {
         if (value instanceof Double d) return renderDouble(d);
         if (value instanceof BigDecimal bd) return bd.toPlainString();
         if (value instanceof BigInteger bi) return bi.toString();
-        if (value instanceof String s) return "'" + s.replace("'", "''") + "'";
+        if (value instanceof String s) return stringLiteral(s);
         if (value instanceof byte[] bytes) return blobLiteral(bytes);
         if (value instanceof LocalDate d) return "DATE '" + d + "'";
         if (value instanceof LocalTime t) return "TIME '" + t + "'";
@@ -59,7 +61,18 @@ public final class SqlLiteral {
             return "INTERVAL '" + iv.months() + " months " + iv.days() + " days "
                     + iv.micros() + " microseconds'";
         }
-        return "'" + value.toString().replace("'", "''") + "'";
+        return stringLiteral(value.toString());
+    }
+
+    static boolean hasNormalizedWhitespace(String sql) {
+        return sql.chars().anyMatch(c -> c == 0x00A0 || (c >= 0x2000 && c <= 0x200B)
+                || c == 0x202F || c == 0x205F || c == 0x2060 || c == 0x3000 || c == 0xFEFF);
+    }
+
+    private static String stringLiteral(String value) {
+        if (!hasNormalizedWhitespace(value)) return "'" + value.replace("'", "''") + "'";
+        // Keep normalization-sensitive values out of DuckDB's pre-lexing Unicode-space pass.
+        return "decode(from_hex('" + HexFormat.of().formatHex(value.getBytes(StandardCharsets.UTF_8)) + "'))";
     }
 
     private static String renderDouble(double d) {

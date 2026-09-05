@@ -7,13 +7,20 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.condition.EnabledIf;
 
+import java.math.BigInteger;
 import java.sql.Array;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Struct;
+import java.sql.Types;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -93,6 +100,29 @@ public class NestedReadEdgeIntegrationTest {
             assertTrue(rs.wasNull());
             assertTrue(rs.next());
             assertEquals(0, ((Object[]) rs.getArray("arr").getArray()).length);
+        }
+    }
+
+    @Test
+    void unsignedBigIntegersStayExactInsideNestedValues() throws Exception {
+        BigInteger max = BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE);
+        BigInteger high = BigInteger.ONE.shiftLeft(63);
+        try (Connection c = connect(); Statement s = c.createStatement(); ResultSet rs = s.executeQuery(
+                "SELECT [0, 9223372036854775808, 18446744073709551615, NULL]::UBIGINT[] AS a, "
+                        + "[0, 18446744073709551615, NULL]::UBIGINT[3] AS fixed, "
+                        + "{'v': 18446744073709551615::UBIGINT, 'missing': NULL::UBIGINT} AS s, "
+                        + "MAP {18446744073709551615::UBIGINT: 9223372036854775808::UBIGINT} AS m, "
+                        + "[[18446744073709551615::UBIGINT, NULL::UBIGINT], []] AS nested")) {
+            assertTrue(rs.next());
+            Array array = rs.getArray("a");
+            assertEquals(Types.OTHER, array.getBaseType());
+            assertEquals("UBIGINT", array.getBaseTypeName());
+            assertArrayEquals(new Object[]{BigInteger.ZERO, high, max, null}, (Object[]) array.getArray());
+            assertArrayEquals(new Object[]{BigInteger.ZERO, max, null}, (Object[]) rs.getArray("fixed").getArray());
+            assertArrayEquals(new Object[]{max, null}, ((Struct) rs.getObject("s")).getAttributes());
+            assertEquals(Map.of(max, high), rs.getObject("m"));
+            assertArrayEquals(new Object[]{Arrays.asList(max, null), List.of()},
+                    (Object[]) rs.getArray("nested").getArray());
         }
     }
 }

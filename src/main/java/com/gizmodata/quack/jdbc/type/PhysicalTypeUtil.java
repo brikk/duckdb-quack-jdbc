@@ -88,6 +88,9 @@ public final class PhysicalTypeUtil {
         if (!(info instanceof ExtraTypeInfo.Decimal d)) {
             throw new QuackProtocolException("DECIMAL type is missing DecimalTypeInfo");
         }
+        if (d.width() < 1 || d.width() > 38 || d.scale() < 0 || d.scale() > d.width()) {
+            throw new QuackProtocolException("Invalid DECIMAL(" + d.width() + "," + d.scale() + ")");
+        }
         if (d.width() <= 4) return PhysicalType.INT16;
         if (d.width() <= 9) return PhysicalType.INT32;
         if (d.width() <= 18) return PhysicalType.INT64;

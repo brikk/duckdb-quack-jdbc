@@ -98,7 +98,7 @@ jdbc:quack://host[:port][/database][?token=…&tls=…]
 |----------------------|---------|--------------------------------------------------------------------------|
 | `host`               | —       | Required.                                                                |
 | `port`               | 9494    | Default Quack port.                                                      |
-| `database`           | (none)  | Reserved; passed through to the server when provided.                    |
+| `database`           | (none)  | URL path selects an existing server catalog with `USE`; unknown catalogs fail connection. |
 | `token`              | (none)  | Authentication token. Prefer an indirect token source for shared configs. |
 | `password`           | (none)  | Alias for `token`, useful for tools that expose a password field.         |
 | `tokenEnv`           | (none)  | Environment variable containing the authentication token.                 |
@@ -271,6 +271,14 @@ GizmoData roadmap.
 
 - DataChunk vector encodings supported: **FLAT**, **CONSTANT**,
   **DICTIONARY**, **SEQUENCE**. **FSST** is not yet supported.
+- Integer JDBC mappings preserve the logical range: UTINYINT, USMALLINT,
+  and UINTEGER use SMALLINT, INTEGER, and BIGINT respectively. UBIGINT,
+  HUGEINT, and UHUGEINT use `Types.OTHER` and return `BigInteger` from
+  `getObject`, including small values and elements of nested types.
+  Use `getObject` or `getBigDecimal` to retain their full range; explicit
+  primitive getters can narrow values. Precision reports the actual decimal
+  capacity (20/39/39 digits for UBIGINT/HUGEINT/UHUGEINT), deliberately
+  differing from native duckdb-jdbc 1.5.5.0's undercounts (19/38/38).
 - Nested types (STRUCT / LIST / MAP / ARRAY) are wrapped for JDBC:
   `getObject` returns a `java.sql.Array` for LIST/ARRAY, a `java.sql.Struct`
   for STRUCT, and a `java.util.Map` for MAP, matching DuckDB's own JDBC
@@ -284,9 +292,16 @@ GizmoData roadmap.
 - Prepared-statement parameters use client-side literal substitution.
   Native parameter binding will follow once the Quack protocol surfaces
   bind parameters (`PREPARE_REQUEST` currently carries only the SQL text).
+  Prepared SQL containing Unicode whitespace that DuckDB normalizes before
+  lexing (such as nonbreaking spaces) is rejected to avoid ambiguous marker
+  boundaries. Use ASCII whitespace in SQL; parameter values may contain
+  those Unicode characters.
 - The `APPEND_REQUEST` fast-path encodes scalar and nested
   (STRUCT / LIST / ARRAY / MAP) DataChunks, so `QuackConnection.session()
-  .appendChunk(...)` can bulk-load nested data.
+  .appendChunk(...)` can bulk-load nested data. Appends through a JDBC
+  connection's session honor its auto-commit mode and participate in its
+  commit/rollback. Independently created `QuackSession` instances retain
+  caller-managed transaction behavior.
 
 ## Credits
 

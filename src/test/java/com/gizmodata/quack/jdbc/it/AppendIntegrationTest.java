@@ -1,5 +1,6 @@
 package com.gizmodata.quack.jdbc.it;
 
+import com.gizmodata.quack.jdbc.QuackProtocolException;
 import com.gizmodata.quack.jdbc.message.DataChunk;
 import com.gizmodata.quack.jdbc.message.DecodedVector;
 import com.gizmodata.quack.jdbc.message.Validity;
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.condition.EnabledIf;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -21,12 +23,15 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -240,6 +245,140 @@ public class AppendIntegrationTest {
                 assertArrayEquals(payload, rs.getBytes(1));
             }
             s.execute("DROP TABLE jdbc_it_append_blob");
+        }
+    }
+
+    @Test
+    void outOfRangeAppendDoesNotWriteAnyRows() throws Exception {
+        try (QuackConnection c = connect(); Statement s = c.createStatement()) {
+            s.execute("CREATE TABLE jdbc_it_append_range (v DECIMAL(4,0))");
+            LogicalType type = LogicalType.decimal(4, 0);
+            DataChunk invalid = new DataChunk(2, List.of(type), List.of(
+                    new DecodedVector.ObjectVec(type, new Object[]{BigDecimal.ONE, new BigDecimal("40000")})));
+            assertThrows(QuackProtocolException.class,
+                    () -> c.session().appendChunk("main", "jdbc_it_append_range", invalid));
+            try (ResultSet rs = s.executeQuery("SELECT count(*) AS n FROM jdbc_it_append_range")) {
+                assertTrue(rs.next());
+                assertEquals(0, rs.getInt(1));
+            }
+            DataChunk valid = new DataChunk(2, List.of(type), List.of(
+                    new DecodedVector.ObjectVec(type, new Object[]{new BigDecimal("-9999"), new BigDecimal("9999")})));
+            c.session().appendChunk("main", "jdbc_it_append_range", valid);
+            try (ResultSet rs = s.executeQuery("SELECT v::VARCHAR FROM jdbc_it_append_range ORDER BY v")) {
+                assertTrue(rs.next());
+                assertEquals("-9999", rs.getString(1));
+                assertTrue(rs.next());
+                assertEquals("9999", rs.getString(1));
+                assertFalse(rs.next());
+            }
+        }
+    }
+
+    @Test
+    void decimalAppendPreservesExactIntegralInputs() throws Exception {
+        LogicalType integer = LogicalType.decimal(18, 0);
+        LogicalType scaled = LogicalType.decimal(18, 2);
+        LogicalType wide = LogicalType.decimal(38, 0);
+        long exact = 9_007_199_254_740_993L;
+        BigInteger large = new BigInteger("18446744073709551617");
+        DataChunk chunk = new DataChunk(2, List.of(integer, scaled, wide), List.of(
+                new DecodedVector.ObjectVec(integer, new Object[]{exact, -exact}),
+                new DecodedVector.ObjectVec(scaled, new Object[]{BigInteger.valueOf(exact), BigInteger.valueOf(-exact)}),
+                new DecodedVector.ObjectVec(wide, new Object[]{large, large})));
+        try (QuackConnection c = connect(); Statement s = c.createStatement()) {
+            s.execute("CREATE TABLE jdbc_it_append_exact (v DECIMAL(18,0), scaled DECIMAL(18,2), wide DECIMAL(38,0))");
+            c.session().appendChunk("main", "jdbc_it_append_exact", chunk);
+            try (ResultSet rs = s.executeQuery("SELECT * FROM jdbc_it_append_exact ORDER BY v DESC")) {
+                for (long expected : new long[]{exact, -exact}) {
+                    assertTrue(rs.next());
+                    assertEquals(BigDecimal.valueOf(expected), rs.getBigDecimal(1));
+                    assertEquals(BigDecimal.valueOf(expected).setScale(2), rs.getBigDecimal(2));
+                    assertEquals(new BigDecimal(large), rs.getBigDecimal(3));
+                }
+                assertFalse(rs.next());
+            }
+        }
+    }
+
+    @Test
+    void signedHugeIntsAndWideDecimalsAppendExactly() throws Exception {
+        List<BigInteger> hugeValues = Arrays.asList(BigInteger.ONE.shiftLeft(127).negate(),
+                BigInteger.valueOf(-1), BigInteger.ZERO, BigInteger.ONE.shiftLeft(63),
+                BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE),
+                BigInteger.ONE.shiftLeft(127).subtract(BigInteger.ONE), null);
+        try (QuackConnection c = connect(); Statement s = c.createStatement()) {
+            s.execute("CREATE TABLE jdbc_it_append_huge (i INTEGER, v HUGEINT)");
+            LogicalType indexType = LogicalType.of(LogicalTypeId.INTEGER);
+            LogicalType hugeType = LogicalType.of(LogicalTypeId.HUGEINT);
+            c.session().appendChunk("main", "jdbc_it_append_huge", new DataChunk(hugeValues.size(),
+                    List.of(indexType, hugeType), List.of(
+                            new DecodedVector.IntVec(indexType, new int[]{0, 1, 2, 3, 4, 5, 6}, null),
+                            new DecodedVector.ObjectVec(hugeType, hugeValues.toArray()))));
+            try (ResultSet rs = s.executeQuery("SELECT v::VARCHAR, v FROM jdbc_it_append_huge ORDER BY i")) {
+                for (BigInteger value : hugeValues) {
+                    assertTrue(rs.next());
+                    assertEquals(value == null ? null : value.toString(), rs.getString(1));
+                    assertEquals(value, rs.getObject(2));
+                }
+                assertFalse(rs.next());
+            }
+
+            List<LogicalType> types = new ArrayList<>();
+            List<DecodedVector> columns = new ArrayList<>();
+            List<BigDecimal> maxima = new ArrayList<>();
+            StringBuilder ddl = new StringBuilder("CREATE TABLE jdbc_it_append_wide_decimals (i INTEGER");
+            types.add(indexType);
+            columns.add(new DecodedVector.IntVec(indexType, new int[]{0, 1, 2}, null));
+            for (int width : new int[]{19, 38}) {
+                for (int scale : new int[]{0, 2}) {
+                    LogicalType type = LogicalType.decimal(width, scale);
+                    BigDecimal max = new BigDecimal(BigInteger.TEN.pow(width).subtract(BigInteger.ONE), scale);
+                    ddl.append(", d").append(maxima.size()).append(" DECIMAL(")
+                            .append(width).append(',').append(scale).append(')');
+                    types.add(type);
+                    columns.add(new DecodedVector.ObjectVec(type, new Object[]{max, max.negate(), null}));
+                    maxima.add(max);
+                }
+            }
+            s.execute(ddl.append(')').toString());
+            c.session().appendChunk("main", "jdbc_it_append_wide_decimals", new DataChunk(3, types, columns));
+            try (ResultSet rs = s.executeQuery("SELECT * FROM jdbc_it_append_wide_decimals ORDER BY i")) {
+                for (int row = 0; row < 3; row++) {
+                    assertTrue(rs.next());
+                    for (int col = 0; col < maxima.size(); col++) {
+                        BigDecimal expected = row == 0 ? maxima.get(col) : row == 1 ? maxima.get(col).negate() : null;
+                        assertEquals(expected, rs.getBigDecimal(col + 2));
+                    }
+                }
+                assertFalse(rs.next());
+            }
+        }
+    }
+
+    @Test
+    void unsignedBigIntsAppendAndReadBackWithoutSignedNarrowing() throws Exception {
+        List<BigInteger> values = Arrays.asList(BigInteger.ZERO, BigInteger.valueOf(Long.MAX_VALUE),
+                BigInteger.ONE.shiftLeft(63), BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE), null);
+        LogicalType indexType = LogicalType.of(LogicalTypeId.INTEGER);
+        LogicalType type = LogicalType.of(LogicalTypeId.UBIGINT);
+        try (QuackConnection c = connect(); Statement s = c.createStatement()) {
+            s.execute("CREATE TABLE jdbc_it_append_ubigint (i INTEGER, v UBIGINT)");
+            c.session().appendChunk("main", "jdbc_it_append_ubigint", new DataChunk(values.size(),
+                    List.of(indexType, type), List.of(
+                            new DecodedVector.IntVec(indexType, new int[]{0, 1, 2, 3, 4}, null),
+                            new DecodedVector.ObjectVec(type, values.toArray()))));
+            try (ResultSet rs = s.executeQuery("SELECT v, v::VARCHAR FROM jdbc_it_append_ubigint ORDER BY i")) {
+                for (BigInteger value : values) {
+                    assertTrue(rs.next());
+                    assertEquals(value, rs.getObject(1));
+                    assertEquals(value == null, rs.wasNull());
+                    assertEquals(value, rs.getObject(1, BigInteger.class));
+                    assertEquals(value == null ? null : new BigDecimal(value), rs.getBigDecimal(1));
+                    assertEquals(value == null ? null : value.toString(), rs.getString(1));
+                    assertEquals(rs.getString(2), rs.getString(1));
+                }
+                assertFalse(rs.next());
+            }
         }
     }
 }

@@ -6,7 +6,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-(nothing yet)
+### Fixed
+
+- **B1:** Prepared parameters are located with a shared SQL-aware scanner
+  covering comments, quoted identifiers, escape strings, and dollar quotes.
+  Literal boundaries and negative-number grouping preserve parsing semantics.
+  Ambiguous DuckDB-normalized Unicode whitespace in SQL templates is rejected;
+  affected bound strings are preserved using an ASCII-only UTF-8 expression.
+- **B5:** Numeric APPEND rejects integer range overflow and invalid DECIMAL
+  precision/scale rather than silently truncating values. Fractional and
+  non-finite integer inputs are rejected before transport.
+- **B9:** APPEND through a JDBC connection's session participates in that
+  connection's manual transactions. Standalone sessions remain caller-managed.
+- **B10:** The database in the JDBC URL is selected and validated during
+  connection initialization, with disconnect cleanup if selection fails.
+- **B4:** Exact integer-to-decimal conversions and decimal APPEND inputs no
+  longer pass through floating point; typed BigInteger reads no longer narrow
+  large values through long.
+- **B6:** Signed HUGEINT encoding preserves unsigned low-word bits and rejects
+  inputs outside the signed 128-bit range. Negative values and wide DECIMAL
+  values now encode correctly, including signed endpoints.
+- **B2:** UBIGINT consistently materializes as nonnegative `BigInteger`,
+  including compressed vectors, nested values, and streamed fetch batches.
+- **B3:** Unsigned integer JDBC types are widened to lossless representations;
+  UBIGINT/HUGEINT/UHUGEINT report `Types.OTHER`. Numeric Java class names,
+  precision, and display sizes match the represented range. Precision uses
+  the actual 20/39/39-digit capacity rather than the native driver's 19/38/38.
+
+Review IDs and verification details are recorded in [CODE_REVIEW.md](CODE_REVIEW.md).
+Other findings remain open; the review records current resolution status.
 
 ## [0.6.0] — 2026-07-29
 

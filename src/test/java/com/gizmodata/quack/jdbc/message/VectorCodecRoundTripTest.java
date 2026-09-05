@@ -1,5 +1,6 @@
 package com.gizmodata.quack.jdbc.message;
 
+import com.gizmodata.quack.jdbc.QuackProtocolException;
 import com.gizmodata.quack.jdbc.codec.BinaryReader;
 import com.gizmodata.quack.jdbc.codec.BinaryWriter;
 import com.gizmodata.quack.jdbc.type.LogicalType;
@@ -7,6 +8,7 @@ import com.gizmodata.quack.jdbc.type.LogicalTypeId;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -15,6 +17,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -113,6 +116,110 @@ class VectorCodecRoundTripTest {
         for (int i = 0; i < 3; i++) {
             assertNull(decoded.columns().get(0).getObject(i));
         }
+    }
+
+    @Test
+    void integerEncodingRejectsOverflowInsteadOfTruncating() {
+        LogicalTypeId[] signed = {LogicalTypeId.TINYINT, LogicalTypeId.SMALLINT,
+                LogicalTypeId.INTEGER, LogicalTypeId.BIGINT, LogicalTypeId.HUGEINT};
+        LogicalTypeId[] unsigned = {LogicalTypeId.UTINYINT, LogicalTypeId.USMALLINT,
+                LogicalTypeId.UINTEGER, LogicalTypeId.UBIGINT, LogicalTypeId.UHUGEINT};
+        int[] bits = {8, 16, 32, 64, 128};
+        for (int i = 0; i < bits.length; i++) {
+            LogicalType signedType = LogicalType.of(signed[i]);
+            LogicalType unsignedType = LogicalType.of(unsigned[i]);
+            BigInteger signedLimit = BigInteger.ONE.shiftLeft(bits[i] - 1);
+            BigInteger unsignedLimit = BigInteger.ONE.shiftLeft(bits[i]);
+            assertThrows(QuackProtocolException.class, () -> encodeValue(signedType, signedLimit));
+            assertThrows(QuackProtocolException.class,
+                    () -> encodeValue(signedType, signedLimit.negate().subtract(BigInteger.ONE)));
+            assertThrows(QuackProtocolException.class, () -> encodeValue(unsignedType, unsignedLimit));
+            assertThrows(QuackProtocolException.class, () -> encodeValue(unsignedType, BigInteger.valueOf(-1)));
+            for (Object invalid : new Object[]{new BigDecimal("1.5"), Double.NaN, Double.POSITIVE_INFINITY}) {
+                assertThrows(QuackProtocolException.class, () -> encodeValue(signedType, invalid));
+            }
+
+            // Assert wire bits independently of logical value materialization.
+            BigInteger max = unsignedLimit.subtract(BigInteger.ONE);
+            for (Object[] sample : new Object[][]{
+                    {signedType, signedLimit.negate()}, {signedType, signedLimit.subtract(BigInteger.ONE)},
+                    {unsignedType, max}, {unsignedType, BigInteger.ZERO}}) {
+                BinaryReader reader = new BinaryReader(encodeValue((LogicalType) sample[0], sample[1]));
+                assertEquals(false, reader.readRequiredField(100, reader::readBool));
+                byte[] raw = reader.readRequiredField(102, reader::readBlob);
+                reader.readEndObject();
+                reader.assertEof();
+                BigInteger expected = (BigInteger) sample[1];
+                assertEquals(bits[i] / 8, raw.length);
+                for (int b = 0; b < raw.length; b++) {
+                    assertEquals(expected.shiftRight(b * 8).byteValue(), raw[b]);
+                }
+            }
+        }
+    }
+
+    @Test
+    void decimalEncodingChecksDeclaredPrecisionAndRoundingCarry() {
+        for (int width : new int[]{1, 4, 5, 9, 10, 18, 19, 38}) {
+            for (int scale : new int[]{0, width}) {
+                LogicalType type = LogicalType.decimal(width, scale);
+                BigDecimal limit = new BigDecimal(BigInteger.TEN.pow(width), scale);
+                assertThrows(QuackProtocolException.class, () -> encodeValue(type, limit));
+                assertThrows(QuackProtocolException.class, () -> encodeValue(type, limit.negate()));
+                BigDecimal carries = limit.subtract(BigDecimal.valueOf(4, scale + 1));
+                assertThrows(QuackProtocolException.class, () -> encodeValue(type, carries));
+                BigDecimal max = limit.subtract(BigDecimal.ONE.scaleByPowerOfTen(-scale));
+                for (BigDecimal value : new BigDecimal[]{max, max.negate()}) {
+                    DataChunk chunk = new DataChunk(1, List.of(type), List.of(
+                            new DecodedVector.ObjectVec(type, new Object[]{value})));
+                    assertEquals(value, roundTrip(chunk).columns().get(0).getObject(0));
+                }
+            }
+        }
+        assertThrows(QuackProtocolException.class,
+                () -> encodeValue(LogicalType.decimal(4, 0), new BigDecimal("40000")));
+        for (LogicalType invalid : new LogicalType[]{LogicalType.decimal(0, 0),
+                LogicalType.decimal(39, 0), LogicalType.decimal(4, -1), LogicalType.decimal(4, 5)}) {
+            assertThrows(QuackProtocolException.class, () -> encodeValue(invalid, null));
+        }
+    }
+
+    @Test
+    void integerEncodingUsesTheExactFloatingPointValue() {
+        LogicalType type = LogicalType.of(LogicalTypeId.BIGINT);
+        for (Number value : new Number[]{Math.scalb(1.0, 60), -Math.scalb(1.0, 63),
+                Math.scalb(1.0f, 60), -Math.scalb(1.0f, 63)}) {
+            DecodedVector decoded = VectorCodec.decodeVector(new BinaryReader(encodeValue(type, value)), type, 1);
+            assertEquals(new BigDecimal(value.doubleValue()).longValueExact(), decoded.getLong(0));
+        }
+        assertThrows(QuackProtocolException.class, () -> encodeValue(type, Math.scalb(1.0f, 63)));
+        assertThrows(QuackProtocolException.class, () -> encodeValue(type, Math.scalb(1.0, 63)));
+        assertThrows(QuackProtocolException.class,
+                () -> encodeValue(LogicalType.of(LogicalTypeId.UBIGINT), Math.scalb(1.0, 64)));
+    }
+
+    @Test
+    void decimalEncodingPreservesExactIntegralInputs() {
+        for (int scale : new int[]{0, 2}) {
+            LogicalType type = LogicalType.decimal(18, scale);
+            for (Number value : new Number[]{9_007_199_254_740_993L, -9_007_199_254_740_993L,
+                    new BigInteger("9007199254740993"), new BigInteger("-9007199254740993")}) {
+                BinaryReader reader = new BinaryReader(encodeValue(type, value));
+                assertEquals(new BigDecimal(value.toString()).setScale(scale),
+                        VectorCodec.decodeVector(reader, type, 1).getObject(0));
+                reader.assertEof();
+            }
+        }
+        LogicalType wide = LogicalType.decimal(38, 0);
+        BigInteger value = new BigInteger("18446744073709551617");
+        assertEquals(new BigDecimal(value),
+                VectorCodec.decodeVector(new BinaryReader(encodeValue(wide, value)), wide, 1).getObject(0));
+    }
+
+    private static byte[] encodeValue(LogicalType type, Object value) {
+        BinaryWriter writer = new BinaryWriter();
+        VectorCodec.encodeVector(writer, type, new DecodedVector.ObjectVec(type, new Object[]{value}));
+        return writer.toByteArray();
     }
 
     private static DataChunk roundTrip(DataChunk chunk) {

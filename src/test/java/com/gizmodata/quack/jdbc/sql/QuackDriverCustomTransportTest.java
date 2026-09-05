@@ -1,5 +1,7 @@
 package com.gizmodata.quack.jdbc.sql;
 
+import com.gizmodata.quack.jdbc.QuackException;
+import com.gizmodata.quack.jdbc.codec.HugeIntParts;
 import com.gizmodata.quack.jdbc.message.MessageHeader;
 import com.gizmodata.quack.jdbc.message.MessageType;
 import com.gizmodata.quack.jdbc.message.QuackMessage;
@@ -48,6 +50,7 @@ class QuackDriverCustomTransportTest {
                 })) {
             QuackConnection quackConnection = assertInstanceOf(QuackConnection.class, connection);
             assertEquals("custom-connection", quackConnection.session().connectionId());
+            assertEquals("db", connection.getCatalog());
         }
 
         QuackUri uri = factoryUri.get();
@@ -59,14 +62,43 @@ class QuackDriverCustomTransportTest {
         assertEquals(Duration.ofSeconds(3), uri.connectTimeout());
         assertEquals(Duration.ofSeconds(4), uri.requestTimeout());
 
-        assertEquals(2, transport.requests.size());
+        assertEquals(3, transport.requests.size());
         QuackMessage firstRequest = transport.requests.get(0);
         QuackMessage secondRequest = transport.requests.get(1);
+        QuackMessage thirdRequest = transport.requests.get(2);
         assertInstanceOf(QuackMessage.ConnectionRequest.class, firstRequest);
         assertEquals(Optional.of("url-token"),
                 ((QuackMessage.ConnectionRequest) firstRequest).authString());
-        assertInstanceOf(QuackMessage.DisconnectMessage.class, secondRequest);
-        assertEquals(Optional.of("custom-connection"), secondRequest.header().connectionId());
+        assertEquals("USE \"db\".\"main\"", assertInstanceOf(QuackMessage.PrepareRequest.class, secondRequest).sql());
+        assertInstanceOf(QuackMessage.DisconnectMessage.class, thirdRequest);
+        assertEquals(Optional.of("custom-connection"), thirdRequest.header().connectionId());
+    }
+
+    @Test
+    void urlCatalogIsQuotedAndSelectedOnlyOnce() throws SQLException {
+        RecordingTransport transport = new RecordingTransport("catalog-test");
+        try (Connection c = new QuackDriver().connect("jdbc:quack://example.test/odd%20%22catalog",
+                new Properties(), uri -> transport)) {
+            assertEquals("odd \"catalog", c.getCatalog());
+            c.setCatalog(c.getCatalog());
+            assertEquals(2, transport.requests.size());
+            assertEquals("USE \"odd \"\"catalog\".\"main\"",
+                    assertInstanceOf(QuackMessage.PrepareRequest.class, transport.requests.get(1)).sql());
+        }
+    }
+
+    @Test
+    void failedCatalogSelectionDisconnectsTheNewSession() {
+        RecordingTransport transport = new RecordingTransport("failed-catalog");
+        transport.failCatalog = true;
+        SQLException error = assertThrows(SQLException.class,
+                () -> new QuackDriver().connect("jdbc:quack://example.test/missing",
+                        new Properties(), uri -> transport));
+        assertTrue(error.getMessage().contains("unknown catalog"));
+        assertEquals(3, transport.requests.size());
+        assertInstanceOf(QuackMessage.ConnectionRequest.class, transport.requests.get(0));
+        assertInstanceOf(QuackMessage.PrepareRequest.class, transport.requests.get(1));
+        assertInstanceOf(QuackMessage.DisconnectMessage.class, transport.requests.get(2));
     }
 
     @Test
@@ -112,6 +144,7 @@ class QuackDriverCustomTransportTest {
 
         private final String connectionId;
         private final List<QuackMessage> requests = new ArrayList<>();
+        private boolean failCatalog;
 
         RecordingTransport(String connectionId) {
             this.connectionId = connectionId;
@@ -136,6 +169,12 @@ class QuackDriverCustomTransportTest {
                         MessageHeader.of(MessageType.SUCCESS_RESPONSE)
                                 .withConnectionId(connectionId)
                                 .withClientQueryId(clientQueryId));
+            }
+            if (request instanceof QuackMessage.PrepareRequest) {
+                if (failCatalog) throw new QuackException("unknown catalog");
+                return new QuackMessage.PrepareResponse(
+                        MessageHeader.of(MessageType.PREPARE_RESPONSE).withConnectionId(connectionId),
+                        List.of(), List.of(), false, List.of(), new HugeIntParts(0, 0));
             }
             throw new AssertionError("unexpected request: " + request.getClass().getSimpleName());
         }

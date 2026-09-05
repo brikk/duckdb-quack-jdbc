@@ -11,6 +11,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.condition.EnabledIf;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.sql.Array;
 import java.sql.Blob;
 import java.sql.Connection;
@@ -129,6 +131,54 @@ public class JdbcCoverageIntegrationTest {
             }
             s.execute("DROP TABLE jdbc_it_schema_a.t");
             s.execute("DROP SCHEMA jdbc_it_schema_a");
+        }
+    }
+
+    @Test
+    void urlCatalogControlsUnqualifiedWrites() throws Exception {
+        try (Connection setup = connect(); Statement s = setup.createStatement()) {
+            s.execute("CREATE TABLE jdbc_it_url_target (v INTEGER)");
+            for (String catalog : new String[]{"jdbc_it_catalog", "jdbc it \"catalog"}) {
+                String identifier = "\"" + catalog.replace("\"", "\"\"") + "\"";
+                s.execute("ATTACH ':memory:' AS " + identifier);
+                s.execute("CREATE TABLE " + identifier + ".main.jdbc_it_url_target (v INTEGER)");
+                String path = URLEncoder.encode(catalog, StandardCharsets.UTF_8).replace("+", "%20");
+                String url = "jdbc:quack://127.0.0.1:" + server.port() + "/" + path + "?token=" + server.token();
+                try (Connection c = DriverManager.getConnection(url); Statement write = c.createStatement()) {
+                    assertEquals(catalog, c.getCatalog());
+                    c.setCatalog(catalog);
+                    try (ResultSet rs = write.executeQuery("SELECT current_database()")) {
+                        assertTrue(rs.next());
+                        assertEquals(catalog, rs.getString(1));
+                    }
+                    assertEquals(1, write.executeUpdate("INSERT INTO jdbc_it_url_target VALUES (42)"));
+                }
+                try (ResultSet rs = s.executeQuery("SELECT v FROM " + identifier + ".main.jdbc_it_url_target")) {
+                    assertTrue(rs.next());
+                    assertEquals(42, rs.getInt(1));
+                    assertFalse(rs.next());
+                }
+                s.execute("DETACH " + identifier);
+            }
+            try (ResultSet rs = s.executeQuery("SELECT count(*) FROM jdbc_it_url_target")) {
+                assertTrue(rs.next());
+                assertEquals(0, rs.getInt(1));
+            }
+        }
+    }
+
+    @Test
+    void nonexistentUrlCatalogFailsEvenWhenASchemaHasThatName() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            s.execute("CREATE SCHEMA jdbc_it_schema_only");
+            for (String name : new String[]{"jdbc_it_missing_catalog", "main", "jdbc_it_schema_only"}) {
+                String url = "jdbc:quack://127.0.0.1:" + server.port() + "/" + name + "?token=" + server.token();
+                assertThrows(SQLException.class, () -> {
+                    try (Connection ignored = DriverManager.getConnection(url)) {
+                        // A connection must not be returned with a different active catalog.
+                    }
+                }, name);
+            }
         }
     }
 

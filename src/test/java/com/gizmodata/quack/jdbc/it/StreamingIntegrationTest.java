@@ -3,6 +3,7 @@ package com.gizmodata.quack.jdbc.it;
 import com.gizmodata.quack.jdbc.message.DataChunk;
 import com.gizmodata.quack.jdbc.message.DecodedVector;
 import com.gizmodata.quack.jdbc.sql.QuackConnection;
+import com.gizmodata.quack.jdbc.sql.QuackResultSet;
 import com.gizmodata.quack.jdbc.sql.QuackSession;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -11,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.condition.EnabledIf;
 
+import java.math.BigInteger;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -105,6 +107,27 @@ public class StreamingIntegrationTest {
                 count++;
             }
             assertEquals(100_000, count);
+        }
+    }
+
+    @Test
+    void unsignedBigIntegersStayExactAcrossFetchBatches() throws Exception {
+        BigInteger start = BigInteger.ONE.shiftLeft(63);
+        int rows = 100_000;
+        try (QuackConnection c = connect();
+             QuackSession.Cursor cursor = c.session().cursor(
+                     "SELECT 9223372036854775808::UBIGINT + i::UBIGINT AS v FROM range(100000) t(i)");
+             ResultSet rs = new QuackResultSet(null, cursor)) {
+            assertTrue(cursor.materializedRowCount() > 0);
+            assertTrue(cursor.materializedRowCount() < rows);
+            assertEquals(BigInteger.class.getName(), rs.getMetaData().getColumnClassName(1));
+            int count = 0;
+            while (rs.next()) {
+                assertEquals(start.add(BigInteger.valueOf(count)), rs.getObject(1));
+                count++;
+            }
+            assertEquals(rows, count);
+            assertEquals(rows, cursor.materializedRowCount());
         }
     }
 

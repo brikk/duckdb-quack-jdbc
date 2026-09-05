@@ -202,6 +202,9 @@ public final class QuackResultSet extends SkeletalResultSet {
         if (v == null) return null;
         if (v instanceof BigDecimal bd) return bd;
         if (v instanceof BigInteger bi) return new BigDecimal(bi);
+        if (v instanceof Byte || v instanceof Short || v instanceof Integer || v instanceof Long) {
+            return BigDecimal.valueOf(((Number) v).longValue());
+        }
         if (v instanceof Number n) return BigDecimal.valueOf(n.doubleValue());
         return new BigDecimal(v.toString());
     }
@@ -324,7 +327,14 @@ public final class QuackResultSet extends SkeletalResultSet {
         if (type == BigInteger.class) {
             if (v instanceof BigInteger bi) return (T) bi;
             if (v instanceof BigDecimal bd) return (T) bd.toBigInteger();
-            return (T) BigInteger.valueOf(((Number) toNumber(v)).longValue());
+            if (v instanceof Float || v instanceof Double) {
+                try {
+                    return (T) new BigDecimal(((Number) v).doubleValue()).toBigInteger();
+                } catch (NumberFormatException e) {
+                    throw new SQLException("Cannot convert non-finite value to BigInteger", e);
+                }
+            }
+            return (T) new BigDecimal(toNumber(v).toString()).toBigInteger();
         }
         if (type == LocalDate.class && v instanceof LocalDate ld) return (T) ld;
         if (type == LocalTime.class && v instanceof LocalTime lt) return (T) lt;

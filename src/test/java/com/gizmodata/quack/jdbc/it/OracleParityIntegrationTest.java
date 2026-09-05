@@ -9,12 +9,21 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.condition.EnabledIf;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.sql.Array;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Types;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Tag("integration")
 @Tag("oracle")
@@ -76,6 +85,67 @@ public class OracleParityIntegrationTest {
         };
         for (String sql : queries) {
             assertColumnTypeParity(sql);
+        }
+    }
+
+    @Test
+    void integerValuesAndMetadataUseNativeLosslessRepresentations() throws Exception {
+        String[] names = {"TINYINT", "UTINYINT", "SMALLINT", "USMALLINT", "INTEGER", "UINTEGER",
+                "BIGINT", "UBIGINT", "HUGEINT", "UHUGEINT"};
+        int[] widths = {8, 8, 16, 16, 32, 32, 64, 64, 128, 128};
+        try (Statement qs = quack.createStatement(); Statement os = oracle.createStatement()) {
+            for (int i = 0; i < names.length; i++) {
+                String name = names[i];
+                boolean unsigned = name.startsWith("U");
+                BigInteger limit = BigInteger.ONE.shiftLeft(widths[i] - (unsigned ? 0 : 1));
+                BigInteger max = limit.subtract(BigInteger.ONE);
+                BigInteger min = unsigned ? BigInteger.ZERO : limit.negate();
+                String sql = "SELECT v FROM (VALUES (0, '" + min + "'::" + name + "), "
+                        + "(1, 0::" + name + "), (2, '" + max + "'::" + name + "), (3, NULL::" + name + ")) t(i,v) ORDER BY i";
+                try (ResultSet q = qs.executeQuery(sql); ResultSet o = os.executeQuery(sql)) {
+                    ResultSetMetaData qm = q.getMetaData();
+                    ResultSetMetaData om = o.getMetaData();
+                    assertEquals(om.getColumnType(1), qm.getColumnType(1), name);
+                    assertEquals(om.getColumnTypeName(1), qm.getColumnTypeName(1), name);
+                    assertEquals(om.getColumnClassName(1), qm.getColumnClassName(1), name);
+                    assertEquals(om.isSigned(1), qm.isSigned(1), name);
+                    assertEquals(om.getScale(1), qm.getScale(1), name);
+                    // Native underreports UBIGINT/HUGEINT/UHUGEINT precision (19/38/38).
+                    assertEquals(max.toString().length(), qm.getPrecision(1), name);
+                    while (o.next()) {
+                        assertTrue(q.next(), name);
+                        Object expected = o.getObject(1);
+                        assertEquals(expected, q.getObject(1), name);
+                        assertEquals(expected == null, q.wasNull(), name);
+                        Object viaMetadata = switch (qm.getColumnType(1)) {
+                            case Types.TINYINT -> q.getByte(1);
+                            case Types.SMALLINT -> q.getShort(1);
+                            case Types.INTEGER -> q.getInt(1);
+                            case Types.BIGINT -> q.getLong(1);
+                            default -> q.getObject(1, BigInteger.class);
+                        };
+                        if (q.wasNull()) viaMetadata = null;
+                        assertEquals(expected, viaMetadata, name);
+                        assertEquals(expected == null ? null : new BigDecimal(expected.toString()), q.getBigDecimal(1), name);
+                        if (expected != null) {
+                            assertTrue(qm.getColumnDisplaySize(1) >= expected.toString().length(), name);
+                        }
+                    }
+                    assertFalse(q.next(), name);
+                }
+                for (String suffix : new String[]{"[]", "[3]"}) {
+                    String arraySql = "SELECT ['" + min + "', '" + max + "', NULL]::" + name + suffix;
+                    try (ResultSet q = qs.executeQuery(arraySql); ResultSet o = os.executeQuery(arraySql)) {
+                        assertTrue(q.next());
+                        assertTrue(o.next());
+                        Array qa = q.getArray(1);
+                        Array oa = o.getArray(1);
+                        assertEquals(oa.getBaseType(), qa.getBaseType(), name + suffix);
+                        assertEquals(oa.getBaseTypeName(), qa.getBaseTypeName(), name + suffix);
+                        assertArrayEquals((Object[]) oa.getArray(), (Object[]) qa.getArray(), name + suffix);
+                    }
+                }
+            }
         }
     }
 

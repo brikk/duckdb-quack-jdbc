@@ -1,5 +1,6 @@
 package com.gizmodata.quack.jdbc.sql;
 
+import com.gizmodata.quack.jdbc.QuackProtocolException;
 import java.io.InputStream;
 import java.io.Reader;
 import java.math.BigDecimal;
@@ -36,7 +37,7 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
 
     private final QuackConnection connection;
     private final String sql;
-    private final int markerCount;
+    private final List<Integer> markerPositions;
     private final List<Object> parameters = new ArrayList<>();
     private final List<List<Object>> paramBatch = new ArrayList<>();
 
@@ -44,7 +45,7 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
         super(connection);
         this.connection = connection;
         this.sql = sql;
-        this.markerCount = countMarkers(sql);
+        this.markerPositions = parameterPositions(sql);
     }
 
     private void setParam(int index, Object value) throws SQLException {
@@ -56,28 +57,24 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
     }
 
     private String interpolate(List<Object> params) throws SQLException {
-        StringBuilder out = new StringBuilder(sql.length() + 32);
-        int paramIndex = 0;
-        boolean inSingle = false;
-        boolean inDouble = false;
-        for (int i = 0; i < sql.length(); i++) {
-            char c = sql.charAt(i);
-            if (c == '\'' && !inDouble) {
-                inSingle = !inSingle;
-                out.append(c);
-            } else if (c == '"' && !inSingle) {
-                inDouble = !inDouble;
-                out.append(c);
-            } else if (c == '?' && !inSingle && !inDouble) {
-                if (paramIndex >= params.size()) {
-                    throw new SQLException("Not enough parameters bound for SQL: " + sql);
-                }
-                out.append(SqlLiteral.render(params.get(paramIndex++)));
-            } else {
-                out.append(c);
-            }
+        if (params.size() < markerPositions.size()) {
+            throw new SQLException("Not enough parameters bound for SQL: " + sql);
         }
-        return out.toString();
+        StringBuilder out = new StringBuilder(sql.length() + 32);
+        int start = 0;
+        for (int p = 0; p < markerPositions.size(); p++) {
+            int position = markerPositions.get(p);
+            out.append(sql, start, position);
+            // Prevent token merging (e.g. --1) and newline escape-string continuation.
+            String literal = SqlLiteral.render(params.get(p));
+            out.append("/**/");
+            // Unary minus must bind before a following cast or exponentiation.
+            if (literal.startsWith("-")) out.append('(').append(literal).append(')');
+            else out.append(literal);
+            out.append("/**/");
+            start = position + 1;
+        }
+        return out.append(sql, start, sql.length()).toString();
     }
 
     private String interpolate() throws SQLException {
@@ -86,20 +83,104 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
 
     private String interpolateWithDefaults() throws SQLException {
         List<Object> padded = new ArrayList<>(parameters);
-        while (padded.size() < markerCount) padded.add(null);
+        while (padded.size() < markerPositions.size()) padded.add(null);
         return interpolate(padded);
     }
 
-    static int countMarkers(String sql) {
-        int count = 0;
-        boolean inSingle = false, inDouble = false;
-        for (int i = 0; i < sql.length(); i++) {
-            char c = sql.charAt(i);
-            if (c == '\'' && !inDouble) inSingle = !inSingle;
-            else if (c == '"' && !inSingle) inDouble = !inDouble;
-            else if (c == '?' && !inSingle && !inDouble) count++;
+    private static List<Integer> parameterPositions(String sql) {
+        // DuckDB preprocesses these before lexing, using different quoting rules.
+        // Reject ambiguous SQL rather than risk substituting inside a server-side literal.
+        if (SqlLiteral.hasNormalizedWhitespace(sql)) {
+            throw new QuackProtocolException("DuckDB-normalized Unicode whitespace is not supported in prepared SQL; "
+                    + "use ASCII whitespace or bind the text as a parameter");
         }
-        return count;
+        List<Integer> positions = new ArrayList<>();
+        int length = sql.length();
+        for (int i = 0; i < length;) {
+            char c = sql.charAt(i);
+            char next = i + 1 < length ? sql.charAt(i + 1) : 0;
+            if (c == '-' && next == '-') {
+                i += 2;
+                while (i < length && sql.charAt(i) != '\n' && sql.charAt(i) != '\r') i++;
+            } else if (c == '/' && next == '*') {
+                int depth = 1;
+                i += 2;
+                while (i < length && depth > 0) {
+                    if (sql.startsWith("/*", i)) {
+                        depth++;
+                        i += 2;
+                    } else if (sql.startsWith("*/", i)) {
+                        depth--;
+                        i += 2;
+                    } else {
+                        i++;
+                    }
+                }
+            } else if (c == '\'' || c == '"' || ((c == 'e' || c == 'E') && next == '\'')) {
+                boolean escapes = c == 'e' || c == 'E';
+                char quote = escapes ? '\'' : c;
+                i += escapes ? 2 : 1;
+                while (i < length) {
+                    char quoted = sql.charAt(i++);
+                    if (escapes && quoted == '\\' && i < length) {
+                        i++;
+                    } else if (quoted == quote) {
+                        if (i < length && sql.charAt(i) == quote) {
+                            i++;
+                        } else {
+                            int continuation = quote == '\'' ? stringContinuation(sql, i) : -1;
+                            if (continuation < 0) break;
+                            i = continuation + 1;
+                        }
+                    }
+                }
+            } else if (identifierStart(c)) {
+                // Consume the full token so an embedded E or $tag$ is not a quote prefix.
+                do { i++; } while (i < length && (identifierStart(sql.charAt(i))
+                        || (sql.charAt(i) >= '0' && sql.charAt(i) <= '9') || sql.charAt(i) == '$'));
+            } else if (c == '$') {
+                int end = i + 1;
+                if (end < length && identifierStart(sql.charAt(end))) {
+                    do { end++; } while (end < length && (identifierStart(sql.charAt(end))
+                            || (sql.charAt(end) >= '0' && sql.charAt(end) <= '9')));
+                }
+                if (end < length && sql.charAt(end) == '$') {
+                    String delimiter = sql.substring(i, end + 1);
+                    int close = sql.indexOf(delimiter, end + 1);
+                    i = close < 0 ? length : close + delimiter.length();
+                } else {
+                    i++;
+                }
+            } else {
+                if (c == '?') positions.add(i);
+                i++;
+            }
+        }
+        return positions;
+    }
+
+    private static boolean identifierStart(char c) {
+        return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c >= 128;
+    }
+
+    private static int stringContinuation(String sql, int position) {
+        boolean newline = false;
+        while (position < sql.length()) {
+            char c = sql.charAt(position);
+            if (c == '\n' || c == '\r') {
+                newline = true;
+                position++;
+            } else if (c == ' ' || c == '\t' || c == '\f') {
+                position++;
+            } else if (sql.startsWith("--", position)) {
+                position += 2;
+                while (position < sql.length() && sql.charAt(position) != '\n'
+                        && sql.charAt(position) != '\r') position++;
+            } else {
+                return newline && c == '\'' ? position : -1;
+            }
+        }
+        return -1;
     }
 
     @Override
@@ -173,7 +254,7 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
 
     @Override
     public ParameterMetaData getParameterMetaData() {
-        return new QuackParameterMetaData(markerCount);
+        return new QuackParameterMetaData(markerPositions.size());
     }
 
     @Override public void setNull(int i, int sqlType) throws SQLException { setParam(i, null); }

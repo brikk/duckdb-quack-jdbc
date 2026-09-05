@@ -9,6 +9,7 @@ import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.condition.EnabledIf;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -20,7 +21,9 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -74,6 +77,94 @@ public class SqlLiteralRoundTripIntegrationTest {
     }
 
     @Test
+    void parametersRespectDuckDbLexicalContexts() throws Exception {
+        String[] queries = {
+                "SELECT ? AS value -- ? '",
+                "SELECT /* outer ? /* nested ? */ ' */ ? AS value",
+                "SELECT ? AS value, E'it\\'s ?' AS literal",
+                "SELECT ? AS value, E'one' -- ?\n 'two\\'?' AS literal",
+                "SELECT ? AS value, $$ ' /* ? */ $$ AS literal",
+                "SELECT ? AS value, $tag$ $other$ ? $tag$ AS literal",
+                "SELECT ? AS value, $\u03b1$ ? $\u03b1$ AS literal",
+                "SELECT ? AS value, 'it''s ?' AS \"a\"\"?\""
+        };
+        String value = "*/ UNION ALL SELECT 999 -- \\' ? $tag$";
+        try (Connection c = connect()) {
+            for (String sql : queries) {
+                try (PreparedStatement ps = c.prepareStatement(sql)) {
+                    assertEquals(1, ps.getParameterMetaData().getParameterCount(), sql);
+                    ps.setString(1, value);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertTrue(rs.next(), sql);
+                        assertEquals(value, rs.getString(1), sql);
+                        assertFalse(rs.next(), sql);
+                    }
+                }
+            }
+            try (PreparedStatement ps = c.prepareStatement("SELECT 1 /* ? ' */ WHERE ? = 0")) {
+                ps.setString(1, "*/ UNION ALL SELECT 999 --");
+                assertThrows(SQLException.class, ps::executeQuery);
+                ps.setInt(1, 0);
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertTrue(rs.next());
+                    assertEquals(1, rs.getInt(1));
+                    assertFalse(rs.next());
+                }
+            }
+            try (PreparedStatement ps = c.prepareStatement("SELECT -? AS value, ?^2 AS squared")) {
+                ps.setInt(1, -42);
+                ps.setInt(2, -2);
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertTrue(rs.next());
+                    assertEquals(42, rs.getInt(1));
+                    assertEquals(4.0, rs.getDouble(2));
+                }
+            }
+            // A replacement must not become a continuation of an earlier escape string.
+            try (PreparedStatement ps = c.prepareStatement("SELECT E'prefix'\n?")) {
+                ps.setString(1, "\\'; SELECT 999; --");
+                assertThrows(SQLException.class, ps::executeQuery);
+            }
+        }
+    }
+
+    @Test
+    void unicodeWhitespaceCannotChangeParameterBoundaries() throws Exception {
+        try (Connection c = connect()) {
+            String spaces = "\u00a0\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008"
+                    + "\u2009\u200a\u200b\u202f\u205f\u2060\u3000\ufeff";
+            for (char space : spaces.toCharArray()) {
+                for (String sql : new String[]{
+                        "SELECT " + space + "E'\\'?' AS literal, ? AS bound",
+                        "SELECT E'first'\n" + space + "'\\'?' AS literal, ? AS bound"}) {
+                    SQLException error = assertThrows(SQLException.class, () -> {
+                        try (PreparedStatement ps = c.prepareStatement(sql)) {
+                            ps.setString(1, "; SELECT 999; --");
+                            ps.execute();
+                        }
+                    });
+                    assertTrue(error.getMessage().contains("Unicode whitespace"));
+                }
+            }
+            for (String sql : new String[]{"SELECT ? AS bound",
+                    "SELECT E'it\\'s' AS literal, ? AS bound",
+                    "SELECT /* ' */ ? AS bound", "SELECT $$ ' $$ AS literal, ? AS bound"}) {
+                try (PreparedStatement ps = c.prepareStatement(sql)) {
+                    for (String value : new String[]{spaces, "x\u00a0y", "\\'; SELECT 999; --\u00a0",
+                            "\u00a0\\'\ud834\udd1e"}) {
+                        ps.setString(1, value);
+                        try (ResultSet rs = ps.executeQuery()) {
+                            assertTrue(rs.next());
+                            assertEquals(value, rs.getString("bound"), sql);
+                            assertFalse(rs.next());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
     void binaryRoundTrips() throws Exception {
         byte[] payload = {(byte) 0xCA, (byte) 0xFE, 0x00, 0x7F};
         try (Connection c = connect();
@@ -107,6 +198,24 @@ public class SqlLiteralRoundTripIntegrationTest {
                 assertTrue(rs.next());
                 rs.getObject(1);
                 assertTrue(rs.wasNull());
+            }
+        }
+    }
+
+    @Test
+    void exactNumericGettersPreserveLargeIntegers() throws Exception {
+        try (Connection c = connect(); PreparedStatement ps = c.prepareStatement("SELECT ?::BIGINT, ?::VARCHAR")) {
+            for (long value : new long[]{9_007_199_254_740_993L, -9_007_199_254_740_993L,
+                    Long.MIN_VALUE, Long.MAX_VALUE}) {
+                ps.setLong(1, value);
+                ps.setString(2, "18446744073709551617");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertTrue(rs.next());
+                    assertEquals(BigDecimal.valueOf(value), rs.getBigDecimal(1));
+                    assertEquals(BigDecimal.valueOf(value), rs.getObject(1, BigDecimal.class));
+                    assertEquals(new BigInteger("18446744073709551617"), rs.getObject(2, BigInteger.class));
+                    assertFalse(rs.next());
+                }
             }
         }
     }

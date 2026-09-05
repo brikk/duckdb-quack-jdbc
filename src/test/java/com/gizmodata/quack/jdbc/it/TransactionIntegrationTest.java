@@ -1,5 +1,10 @@
 package com.gizmodata.quack.jdbc.it;
 
+import com.gizmodata.quack.jdbc.message.DataChunk;
+import com.gizmodata.quack.jdbc.message.DecodedVector;
+import com.gizmodata.quack.jdbc.sql.QuackConnection;
+import com.gizmodata.quack.jdbc.type.LogicalType;
+import com.gizmodata.quack.jdbc.type.LogicalTypeId;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
@@ -12,6 +17,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -95,6 +101,38 @@ public class TransactionIntegrationTest {
                 assertTrue(rs.next());
                 assertEquals("zz", rs.getString(1));
             }
+        }
+    }
+
+    @Test
+    void appendAsFirstOperationHonorsRollbackCommitAndAutoCommit() throws Exception {
+        LogicalType type = LogicalType.of(LogicalTypeId.INTEGER);
+        DataChunk chunk = new DataChunk(1, List.of(type), List.of(
+                new DecodedVector.IntVec(type, new int[]{42}, null)));
+        try (QuackConnection c = (QuackConnection) connect(); Statement s = c.createStatement();
+             Connection observer = connect(); Statement other = observer.createStatement()) {
+            s.execute("CREATE TABLE tx_append (v INTEGER)");
+            c.setAutoCommit(false);
+            c.session().appendChunk("main", "tx_append", chunk);
+            assertEquals(0, countRows(other, "tx_append"));
+            c.rollback();
+            assertEquals(0, countRows(other, "tx_append"));
+
+            c.session().appendChunk("main", "tx_append", chunk);
+            c.session().appendChunk("main", "tx_append", chunk);
+            assertEquals(0, countRows(other, "tx_append"));
+            c.commit();
+            assertEquals(2, countRows(other, "tx_append"));
+
+            c.session().appendChunk("main", "tx_append", chunk);
+            c.rollback();
+            assertEquals(2, countRows(other, "tx_append"));
+
+            c.session().appendChunk("main", "tx_append", chunk);
+            c.setAutoCommit(true);
+            assertEquals(3, countRows(other, "tx_append"));
+            c.session().appendChunk("main", "tx_append", chunk);
+            assertEquals(4, countRows(other, "tx_append"));
         }
     }
 

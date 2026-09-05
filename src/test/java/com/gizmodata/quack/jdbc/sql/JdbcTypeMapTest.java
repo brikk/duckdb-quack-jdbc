@@ -6,6 +6,7 @@ import com.gizmodata.quack.jdbc.type.LogicalType;
 import com.gizmodata.quack.jdbc.type.LogicalTypeId;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigInteger;
 import java.sql.Types;
 import java.util.List;
 import java.util.Optional;
@@ -138,5 +139,36 @@ class JdbcTypeMapTest {
         assertEquals(Types.STRUCT, JdbcTypeMap.toJdbcType(struct(field("x", scalar(LogicalTypeId.INTEGER)))));
         assertEquals(Types.OTHER, JdbcTypeMap.toJdbcType(map(scalar(LogicalTypeId.INTEGER), scalar(LogicalTypeId.VARCHAR))));
         assertEquals(Types.OTHER, JdbcTypeMap.toJdbcType(enumType("x", "y")));
+    }
+
+    @Test
+    void integerMetadataDescribesLosslessRepresentations() throws Exception {
+        Object[][] cases = {
+                {LogicalTypeId.TINYINT, Types.TINYINT, Byte.class, 3, 4, true},
+                {LogicalTypeId.UTINYINT, Types.SMALLINT, Short.class, 3, 3, false},
+                {LogicalTypeId.SMALLINT, Types.SMALLINT, Short.class, 5, 6, true},
+                {LogicalTypeId.USMALLINT, Types.INTEGER, Integer.class, 5, 5, false},
+                {LogicalTypeId.INTEGER, Types.INTEGER, Integer.class, 10, 11, true},
+                {LogicalTypeId.UINTEGER, Types.BIGINT, Long.class, 10, 10, false},
+                {LogicalTypeId.BIGINT, Types.BIGINT, Long.class, 19, 20, true},
+                {LogicalTypeId.UBIGINT, Types.OTHER, BigInteger.class, 20, 20, false},
+                {LogicalTypeId.HUGEINT, Types.OTHER, BigInteger.class, 39, 40, true},
+                {LogicalTypeId.UHUGEINT, Types.OTHER, BigInteger.class, 39, 39, false}
+        };
+        for (Object[] row : cases) {
+            LogicalType type = scalar((LogicalTypeId) row[0]);
+            QuackResultSetMetaData md = new QuackResultSetMetaData(List.of("v"), List.of(type));
+            String name = type.id().name();
+            assertEquals(row[1], md.getColumnType(1), name);
+            assertEquals(((Class<?>) row[2]).getName(), md.getColumnClassName(1), name);
+            assertEquals(row[3], md.getPrecision(1), name);
+            assertEquals(row[4], md.getColumnDisplaySize(1), name);
+            assertEquals(row[5], md.isSigned(1), name);
+            assertEquals(0, md.getScale(1), name);
+            assertEquals(name, md.getColumnTypeName(1));
+            QuackArray array = new QuackArray(List.of(), type);
+            assertEquals(row[1], array.getBaseType(), name);
+            assertEquals(name, array.getBaseTypeName());
+        }
     }
 }

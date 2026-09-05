@@ -58,10 +58,10 @@ public final class QuackResultSetMetaData implements ResultSetMetaData {
         return switch (typeAt(column).id()) {
             case BOOLEAN -> Boolean.class.getName();
             case TINYINT -> Byte.class.getName();
-            case SMALLINT -> Short.class.getName();
-            case INTEGER, UTINYINT, USMALLINT -> Integer.class.getName();
-            case BIGINT, UINTEGER, UBIGINT -> Long.class.getName();
-            case HUGEINT, UHUGEINT -> java.math.BigInteger.class.getName();
+            case SMALLINT, UTINYINT -> Short.class.getName();
+            case INTEGER, USMALLINT -> Integer.class.getName();
+            case BIGINT, UINTEGER -> Long.class.getName();
+            case UBIGINT, HUGEINT, UHUGEINT -> java.math.BigInteger.class.getName();
             case FLOAT -> Float.class.getName();
             case DOUBLE -> Double.class.getName();
             case DECIMAL -> java.math.BigDecimal.class.getName();

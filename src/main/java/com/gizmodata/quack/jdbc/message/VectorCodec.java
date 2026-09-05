@@ -513,7 +513,7 @@ public final class VectorCodec {
         return switch (type.id()) {
             case DECIMAL, DATE, TIME, TIME_NS, TIME_TZ,
                  TIMESTAMP, TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP_NS, TIMESTAMP_TZ,
-                 UUID, INTERVAL, HUGEINT, UHUGEINT, ENUM -> true;
+                 UUID, INTERVAL, UBIGINT, HUGEINT, UHUGEINT, ENUM -> true;
             default -> physicalType == PhysicalType.INTERVAL
                     || physicalType == PhysicalType.INT128
                     || physicalType == PhysicalType.UINT128;
@@ -543,7 +543,7 @@ public final class VectorCodec {
             }
             case UINT32 -> decodeEnumOrLong(type, reader.readFixedUint32());
             case INT64 -> decodeInt64LogicalValue(type, reader.readFixedInt64());
-            case UINT64 -> reader.readFixedUint64();
+            case UINT64 -> new HugeIntParts(0, reader.readFixedUint64()).toUnsignedBigInteger();
             case FLOAT -> reader.readFixedFloat32();
             case DOUBLE -> reader.readFixedFloat64();
             case INT128 -> {
@@ -574,6 +574,7 @@ public final class VectorCodec {
             case INTEGER -> (int) value;
             case DATE -> LocalDate.ofEpochDay(value);
             case BIGINT -> value;
+            case UBIGINT -> new HugeIntParts(0, value).toUnsignedBigInteger();
             default -> decodeInt64LogicalValue(type, value);
         };
     }
@@ -863,6 +864,15 @@ public final class VectorCodec {
 
     private static void encodeFixedValueForWrite(BinaryWriter buf, LogicalType type,
                                                  PhysicalType physical, Object value) {
+        if (value != null) {
+            switch (type.id()) {
+                case TINYINT, SMALLINT, INTEGER, BIGINT, HUGEINT ->
+                        value = checkedInteger(type, value, physical.byteWidth() * 8, false);
+                case UTINYINT, USMALLINT, UINTEGER, UBIGINT, UHUGEINT ->
+                        value = checkedInteger(type, value, physical.byteWidth() * 8, true);
+                default -> { }
+            }
+        }
         switch (physical) {
             case BOOL -> buf.writeFixedUint8(value != null && (Boolean) value ? 1 : 0);
             case INT8 -> buf.writeFixedInt8(value == null ? 0 : ((Number) value).byteValue());
@@ -922,6 +932,30 @@ public final class VectorCodec {
         }
     }
 
+    private static BigInteger checkedInteger(LogicalType type, Object value, int bits, boolean unsigned) {
+        BigInteger integer;
+        try {
+            if (value instanceof BigInteger bi) integer = bi;
+            else if (value instanceof BigDecimal bd) integer = bd.toBigIntegerExact();
+            else if (value instanceof Byte || value instanceof Short
+                    || value instanceof Integer || value instanceof Long) {
+                integer = BigInteger.valueOf(((Number) value).longValue());
+            } else if (value instanceof Float || value instanceof Double) {
+                integer = new BigDecimal(((Number) value).doubleValue()).toBigIntegerExact();
+            } else if (value instanceof Number n) {
+                integer = new BigDecimal(n.toString()).toBigIntegerExact();
+            } else {
+                throw new QuackProtocolException("Expected a number for " + type.id());
+            }
+        } catch (ArithmeticException | NumberFormatException e) {
+            throw new QuackProtocolException("Cannot encode " + value + " as " + type.id(), e);
+        }
+        if ((unsigned && integer.signum() < 0) || integer.bitLength() > (unsigned ? bits : bits - 1)) {
+            throw new QuackProtocolException("Value " + value + " is out of range for " + type.id());
+        }
+        return integer;
+    }
+
     private static long encodeInt64LogicalValueForWrite(LogicalType type, Object value) {
         if (value == null) return 0L;
         return switch (type.id()) {
@@ -964,6 +998,10 @@ public final class VectorCodec {
     private static BigInteger decimalUnscaled(LogicalType type, Object value) {
         BigDecimal bd;
         if (value instanceof BigDecimal d) bd = d;
+        else if (value instanceof BigInteger bi) bd = new BigDecimal(bi);
+        else if (value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long) {
+            bd = BigDecimal.valueOf(((Number) value).longValue());
+        }
         else if (value instanceof Number n) bd = BigDecimal.valueOf(n.doubleValue());
         else if (value instanceof String s) bd = new BigDecimal(s);
         else throw new QuackProtocolException("Cannot encode " + value + " as DECIMAL");
@@ -972,7 +1010,12 @@ public final class VectorCodec {
         if (!(info instanceof ExtraTypeInfo.Decimal d)) {
             throw new QuackProtocolException("DECIMAL value is missing DecimalTypeInfo");
         }
-        return bd.setScale(d.scale(), java.math.RoundingMode.HALF_UP).unscaledValue();
+        BigDecimal scaled = bd.setScale(d.scale(), java.math.RoundingMode.HALF_UP);
+        if (scaled.precision() > d.width()) {
+            throw new QuackProtocolException("Value " + value + " is out of range for DECIMAL("
+                    + d.width() + "," + d.scale() + ")");
+        }
+        return scaled.unscaledValue();
     }
 
     private static HugeIntParts uuidToHugeIntParts(UUID uuid) {

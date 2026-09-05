@@ -15,10 +15,11 @@ public final class JdbcTypeMap {
     public static int toJdbcType(LogicalType type) {
         return switch (type.id()) {
             case BOOLEAN -> Types.BOOLEAN;
-            case TINYINT, UTINYINT -> Types.TINYINT;
-            case SMALLINT, USMALLINT -> Types.SMALLINT;
-            case INTEGER, UINTEGER -> Types.INTEGER;
-            case BIGINT, UBIGINT, HUGEINT, UHUGEINT -> Types.BIGINT;
+            case TINYINT -> Types.TINYINT;
+            case SMALLINT, UTINYINT -> Types.SMALLINT;
+            case INTEGER, USMALLINT -> Types.INTEGER;
+            case BIGINT, UINTEGER -> Types.BIGINT;
+            case UBIGINT, HUGEINT, UHUGEINT -> Types.OTHER;
             case FLOAT -> Types.REAL;
             case DOUBLE -> Types.DOUBLE;
             case DECIMAL -> Types.DECIMAL;
@@ -137,10 +138,14 @@ public final class JdbcTypeMap {
         return switch (type.id()) {
             case BOOLEAN -> 5;
             case TINYINT -> 4;
+            case UTINYINT -> 3;
             case SMALLINT -> 6;
-            case INTEGER, UINTEGER -> 11;
+            case USMALLINT -> 5;
+            case INTEGER -> 11;
+            case UINTEGER -> 10;
             case BIGINT, UBIGINT -> 20;
-            case HUGEINT, UHUGEINT -> 40;
+            case HUGEINT -> 40;
+            case UHUGEINT -> 39;
             case FLOAT -> 15;
             case DOUBLE -> 24;
             case DECIMAL -> type.typeInfo().filter(i -> i instanceof ExtraTypeInfo.Decimal)
@@ -159,10 +164,11 @@ public final class JdbcTypeMap {
     public static int precision(LogicalType type) {
         return switch (type.id()) {
             case BOOLEAN -> 1;
-            case TINYINT -> 3;
-            case SMALLINT -> 5;
+            case TINYINT, UTINYINT -> 3;
+            case SMALLINT, USMALLINT -> 5;
             case INTEGER, UINTEGER -> 10;
-            case BIGINT, UBIGINT -> 19;
+            case BIGINT -> 19;
+            case UBIGINT -> 20;
             case HUGEINT, UHUGEINT -> 39;
             case FLOAT -> 7;
             case DOUBLE -> 15;

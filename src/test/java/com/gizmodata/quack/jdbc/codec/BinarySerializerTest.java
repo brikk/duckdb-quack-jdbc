@@ -6,6 +6,7 @@ import java.math.BigInteger;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BinarySerializerTest {
@@ -89,12 +90,31 @@ class BinarySerializerTest {
 
     @Test
     void hugeIntRoundTrip() {
-        BigInteger value = BigInteger.valueOf(Long.MAX_VALUE).multiply(BigInteger.valueOf(3));
-        HugeIntParts parts = HugeIntParts.ofSigned(value);
-        BinaryWriter w = new BinaryWriter();
-        w.writeHugeInt(parts);
-        BinaryReader r = new BinaryReader(w.toByteArray());
-        HugeIntParts read = r.readHugeInt();
-        assertEquals(value, read.toSignedBigInteger());
+        for (BigInteger value : new BigInteger[]{BigInteger.ZERO, BigInteger.ONE, BigInteger.valueOf(-1),
+                BigInteger.ONE.shiftLeft(63).subtract(BigInteger.ONE), BigInteger.ONE.shiftLeft(63),
+                BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE), BigInteger.ONE.shiftLeft(64),
+                BigInteger.ONE.shiftLeft(64).negate().subtract(BigInteger.ONE),
+                BigInteger.ONE.shiftLeft(127).negate(), BigInteger.ONE.shiftLeft(127).subtract(BigInteger.ONE)}) {
+            HugeIntParts parts = HugeIntParts.ofSigned(value);
+            BinaryWriter w = new BinaryWriter();
+            w.writeHugeInt(parts);
+            BinaryReader r = new BinaryReader(w.toByteArray());
+            assertEquals(value, r.readHugeInt().toSignedBigInteger(), value.toString());
+            r.assertEof();
+        }
+    }
+
+    @Test
+    void hugeIntPartsPreserveLowWordBitsAndCheckTheSignedRange() {
+        assertEquals(new HugeIntParts(-1, -1), HugeIntParts.ofSigned(BigInteger.valueOf(-1)));
+        assertEquals(new HugeIntParts(0, Long.MIN_VALUE), HugeIntParts.ofSigned(BigInteger.ONE.shiftLeft(63)));
+        assertEquals(new HugeIntParts(Long.MIN_VALUE, 0), HugeIntParts.ofSigned(BigInteger.ONE.shiftLeft(127).negate()));
+        assertEquals(new HugeIntParts(Long.MAX_VALUE, -1),
+                HugeIntParts.ofSigned(BigInteger.ONE.shiftLeft(127).subtract(BigInteger.ONE)));
+        for (BigInteger invalid : new BigInteger[]{BigInteger.ONE.shiftLeft(127),
+                BigInteger.ONE.shiftLeft(127).negate().subtract(BigInteger.ONE),
+                BigInteger.ONE.shiftLeft(128), BigInteger.ONE.shiftLeft(128).negate()}) {
+            assertThrows(ArithmeticException.class, () -> HugeIntParts.ofSigned(invalid), invalid.toString());
+        }
     }
 }

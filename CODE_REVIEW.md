@@ -1,0 +1,415 @@
+# Quack JDBC Whole-Repository Review
+
+Reviewed 2026-09-05 at `/home/jayson/DEV/brikk/fork-quack-jdbc`, version `0.7.0-SNAPSHOT`.
+
+This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Approved implementation passes resolve B1, B5, B9, B10, B4, B6, B2, and B3 in the working tree; resolution notes and V5-V6 record the scope and verification. Existing changes to `CLAUDE.md` and `DUCKDB_COMPATIBILITY.md` were preserved.
+
+All source references below are relative to the repository root. `sql/`, `message/`, `codec/`, `type/`, and `transport/` abbreviate directories under `src/main/java/com/gizmodata/quack/jdbc/`. Original finding line numbers refer to the reviewed baseline; subsequent edits may shift them. Keep the original evidence alongside resolution notes.
+
+## Stable Identifiers
+
+Use these IDs in requests, changes, tests, and follow-up discussions, for example: "do B1", "investigate L3", or "implement I1 and I2".
+
+| Prefix | IDs | Meaning |
+| --- | --- | --- |
+| B | B1-B40 | Prioritized correctness findings |
+| L | L1-L6 | Lower-priority issues, cleanup, and operational tradeoffs |
+| C | C1-C4 | Native-parity observations requiring a compatibility decision before changes |
+| I | I1-I9 | Build, testing, and engineering improvements |
+| S | S1-S8 | Strengths to preserve, not implementation tasks |
+| V | V1-V6 | Verification evidence and limitations, not implementation tasks |
+
+IDs are permanent and independent of severity, priority rank, and document order. B1-B40 match the original full report's numbered findings, not the shorter chat summary's numbering. Never renumber or reuse an ID; record resolution under the existing item and append new IDs for new findings. If an item needs separate work units, retain its parent ID and introduce suffixes such as B4a and B4b.
+
+"Do B1" means address that finding, add targeted regression tests, run relevant verification, and record the outcome under B1. Related IDs are not automatically included in the request. C items and explicit protocol tradeoffs require a decision or investigation rather than an assumed behavior change. Items without an explicit resolution remain open.
+
+## High-Priority Findings
+
+P1 means a fix should precede broader production use: executable SQL escaping parameter boundaries, silently changed data, broken transaction expectations, ordinary supported queries failing, or unbounded resource failures.
+
+### B1. Prepared parameter substitution can expose executable SQL [P1]
+
+Location: `sql/QuackPreparedStatement.java:58-100`.
+
+The two scanners understand single and double quotes but not SQL comments, escape strings, or dollar quoting. This valid SQL has one real parameter: `SELECT 1 /* ? ' */ WHERE ? = 0`. Binding the string `*/ UNION ALL SELECT 999 --` substitutes into the block comment, and execution returns rows 1 and 999. Quotes placed inside a comment do not protect the parameter value from a comment terminator. Separately, `SELECT ? AS value -- ?` incorrectly requires two bindings.
+
+Use a single DuckDB-aware lexical scanner for counting and substitution. Handle line comments, nested block comments, ordinary/escape strings, quoted identifiers, and dollar-quoted strings. Native binding is preferable when the supported protocol provides it, but the current literal-substitution path must be safe independently. Confirmed against DuckDB 1.5.5.
+
+**Resolution (2026-09-05): resolved in the working tree.** The statement scans marker positions once and reuses them for metadata, execution, and batches. The scanner handles nested/line comments, doubled quotes, E strings and their newline continuations, dollar tags, and identifier boundaries. Inserted expressions have block-comment token boundaries; negative numbers are parenthesized to preserve cast/operator precedence.
+
+DuckDB also normalizes certain Unicode whitespace before lexing, using different quoting rules. Prepared SQL templates containing those characters are now explicitly rejected with SQLException via Connection.prepareStatement. Such text can still be bound as data: SqlLiteral uses an ASCII-only UTF-8 decoding expression for affected values, preserving them even after escape strings or comments containing quotes. This deliberate restriction is documented in README. Tests: QuackPreparedStatementTest, SqlLiteralTest, and SqlLiteralRoundTripIntegrationTest, including the original injection, Unicode preprocessor cases, exact bound Unicode values, and negative-number precedence. See V5.
+
+### B2. UBIGINT values are decoded as signed Long [P1]
+
+Location: `message/VectorCodec.java:485-488,512-519`; `message/DecodedVector.java:105-110`.
+
+`SELECT 18446744073709551615::UBIGINT` returns `-1` through `getObject()`. UINT64 uses the signed `LongVec` path without reconstructing the unsigned logical value. Materialize UBIGINT as a nonnegative BigInteger and update metadata consistently. Cover the 2^63 and 2^64 boundaries across compressed and nested vectors. Confirmed live on 1.5.5.
+
+**Resolution (2026-09-05): resolved in the working tree.** UBIGINT uses ObjectVec with nonnegative BigInteger values for every non-null row, including zero and values below 2^63. FLAT and SEQUENCE decoding reconstruct unsigned values from the raw 64-bit word; CONSTANT and DICTIONARY retain the object representation. The low-level BinaryReader raw-bit contract and explicit primitive getter narrowing are unchanged.
+
+Tests: VectorEncodingDecodeTest uses independent FLAT/CONSTANT/DICTIONARY/SEQUENCE fixtures around 2^63 and 2^64, nulls, and empty vectors. AppendIntegrationTest verifies exact APPEND and JDBC object/decimal/string retrieval. NestedReadEdgeIntegrationTest covers lists, fixed arrays, named structs, maps, and nested lists. StreamingIntegrationTest reads 100,000 high-bit values across actual FETCH batches. OracleParityIntegrationTest compares scalar and array values/classes with native JDBC. See V6.
+
+### B3. Numeric metadata directs generic readers into undersized getters [P1]
+
+Location: `sql/JdbcTypeMap.java:18-21`.
+
+UTINYINT/USMALLINT/UINTEGER are advertised as TINYINT/SMALLINT/INTEGER, whereas DuckDB JDBC promotes them to SMALLINT/INTEGER/BIGINT. A metadata-driven reader of `255::UTINYINT` using getByte obtains -1. HUGEINT/UHUGEINT also advertise BIGINT despite requiring more than 64 bits; native DuckDB uses OTHER. Correct the mappings, precision, and class information together. This is separate from the UBIGINT decoder defect and was verified against native 1.5.5.0.
+
+**Resolution (2026-09-05): resolved in the working tree.** UTINYINT/USMALLINT/UINTEGER now report SMALLINT/INTEGER/BIGINT with Short/Integer/Long Java classes. UBIGINT/HUGEINT/UHUGEINT report OTHER and BigInteger. Array base metadata uses the same mappings while retaining the original logical type name. Unsigned display widths and precision describe the full logical range.
+
+Native JDBC 1.5.5.0 was checked directly and by tagged source. Type codes, Java classes, scalar signedness, and values match native behavior. Precision deliberately uses actual decimal digit capacities: 20/39/39 for UBIGINT/HUGEINT/UHUGEINT instead of native's underreported 19/38/38. Native's zero display widths are not copied. Tests: JdbcTypeMapTest covers all ten integer logical types and array base metadata; OracleParityIntegrationTest exercises signed/unsigned endpoints, zero, nulls, metadata-driven getters, and variable/fixed arrays. Non-numeric metadata defects under B23 remain open. See V6.
+
+### B4. Exact numeric conversions pass through floating point or long [P1]
+
+Location: `sql/QuackResultSet.java:200-206,324-327`; `message/VectorCodec.java:964-975`.
+
+Reading BIGINT 9007199254740993 with getBigDecimal returns 9007199254740992. Encoding the same Long or BigInteger into DECIMAL(18,0) loses the same unit. Both paths unnecessarily pass exact integers through doubleValue. Additionally, converting the string `18446744073709551616` through `getObject(..., BigInteger.class)` returns zero because the intermediate BigDecimal is narrowed to long. Preserve exact integral values and construct arbitrary-precision values without lossy intermediates. All examples reproduced.
+
+**Resolution (2026-09-05): resolved in the working tree.** Integral JDBC values and decimal APPEND inputs no longer pass through double. Typed BigInteger retrieval converts decimal strings without narrowing to long and preserves the exact represented value of finite Float/Double inputs before truncating the fraction; non-finite inputs produce SQLException. Tests: QuackResultSetConversionTest, VectorCodecRoundTripTest, AppendIntegrationTest, and SqlLiteralRoundTripIntegrationTest cover values above 2^53/2^64, signed long endpoints, decimal scales, floating-point powers of two, and nulls. The separate B2 and B6 defects were subsequently resolved in the second approved pass. See V5-V6.
+
+### B5. APPEND encoding silently overflows logical numeric ranges [P1]
+
+Location: `message/VectorCodec.java:864-912,964-975`.
+
+Appending BigDecimal 40000 into DECIMAL(4,0) succeeds and stores -25536. The INT16 decimal path checks only intValueExact and then emits two bytes; declared precision is never enforced. Other local examples include TINYINT 128 becoming -128 and UHUGEINT -1 becoming 2^128-1. Validate logical signed/unsigned ranges and DECIMAL precision before serialization; matching a Java storage width is insufficient. DECIMAL corruption confirmed against 1.5.5.
+
+**Resolution (2026-09-05): resolved in the working tree.** APPEND encoding checks signed/unsigned integer ranges before narrowing, rejects fractional/non-finite integer inputs, validates DECIMAL width/scale, and checks decimal precision after rounding. Float/Double integer inputs are checked using their exact binary value, not their rounded display string. Tests: VectorCodecRoundTripTest exercises all integer widths, independent wire-bit assertions, floating boundaries, decimal width transitions, invalid metadata, and rounding carry. AppendIntegrationTest verifies an invalid two-row decimal append writes no rows and valid boundary values still round-trip. B6 was separately resolved in the second approved pass, removing the signed-128 exclusions from these tests. See V5-V6.
+
+### B6. Valid signed HUGEINT values cannot be encoded [P1]
+
+Location: `codec/HugeIntParts.java:10-17`; called by `message/VectorCodec.java:892-902`.
+
+The lower unsigned 64-bit word is converted using longValueExact. This rejects valid bit patterns with bit 63 set: HUGEINT -1, 9223372036854775808, and 18446744073709551615 all throw ArithmeticException. Validate the overall signed 128-bit range and preserve the low word's bits with longValue rather than requiring its magnitude to fit a signed long. This also affects high-precision decimals. Confirmed with local encoder probes.
+
+**Resolution (2026-09-05): resolved in the working tree.** HugeIntParts.ofSigned preserves the low 64 bits with longValue and converts the arithmetic-shifted upper word with longValueExact. This accepts the entire signed-128 range and rejects values outside it instead of wrapping modulo 2^128. BinarySerializerTest first reproduced the previous failure and now covers -1, both signed endpoints, low-word boundaries, and out-of-range values. VectorCodecRoundTripTest no longer excludes valid HUGEINT maxima or wide DECIMAL boundaries. AppendIntegrationTest verifies exact server-side HUGEINT values and positive/negative DECIMAL(19/38,0/2) endpoints, including nulls. See V6.
+
+### B7. Unnamed STRUCT fields overwrite each other [P1]
+
+Location: `message/VectorCodec.java:361-365,749-762`; `sql/QuackResultSet.java:262-273`.
+
+DuckDB tuples have empty field names. Storing their values in a map keyed by field name collapses distinct positions. `SELECT row(1,2)` returns JDBC Struct attributes `[2,2]`; a tuple inside a list loses the first attribute altogether. Preserve positional values for unnamed structs in both the wire layer and JDBC wrappers. Confirmed against 1.5.5.
+
+### B8. NULL temporal values are converted before checking validity [P1]
+
+Location: `message/VectorCodec.java:439-442`.
+
+`SELECT NULL::TIME`, `NULL::TIME_NS`, and `NULL::TIMESTAMP_S` fail. The decoder attempts logical conversion of the signed null sentinel before replacing it with null; multiplication or temporal construction throws. Consume the fixed-width slot without logical conversion when invalid. Cover mixed null/non-null rows and nested/compressed vectors with server-produced null bytes. Self-round-trips miss this because the local encoder writes zero into null slots. Confirmed against 1.5.5.
+
+### B9. The documented bulk append API bypasses manual transactions [P1]
+
+Location: `sql/QuackSession.java:123-140`; `sql/QuackConnection.java:100-106`.
+
+After setAutoCommit(false), an append through connection.session().appendChunk as the first operation executes in server autocommit mode. rollback then leaves the appended row in the table. Lazy BEGIN is called only on the statement path. Make every connection-owned execution path transaction-aware or expose a safe connection-level append API and clearly separate low-level session semantics. Test first append after disabling autocommit and after commit/rollback. Confirmed against 1.5.5.
+
+**Resolution (2026-09-05): resolved for the documented APPEND path in the working tree.** JDBC-created sessions retain their owning connection and invoke its existing lazy transaction initialization before APPEND. Standalone sessions remain caller-managed and public session constructors are preserved. A failed BEGIN prevents APPEND and can be retried. Tests: QuackConnectionTransactionTest checks request ordering, standalone sessions, and failed BEGIN; TransactionIntegrationTest checks visibility from another connection, rollback, commit, first append after transaction completion, and enabling autocommit. Direct low-level cursor execution was not expanded into JDBC transaction management. See V5.
+
+### B10. A database named in the URL is cached but never selected [P1]
+
+Location: `sql/QuackConnection.java:26-33,144-151`.
+
+Connecting to `/review_other` reports that catalog from getCatalog while current_database remains memory. Calling setCatalog with the same name cannot repair it because the cache suppresses USE. Unqualified writes can target the wrong database. Select and validate the requested catalog before caching it, or explicitly reject the currently nonfunctional URL option. The README labels it reserved but also says it is passed through; neither the handshake nor an initialization query uses it. Confirmed against 1.5.5 with an attached catalog.
+
+**Resolution (2026-09-05): resolved in the working tree.** Connection initialization issues `USE "requested_catalog"."main"` before caching the requested catalog. The two-part name prevents an existing schema from masquerading as a catalog. Failure disconnects the newly opened session. Tests: QuackDriverCustomTransportTest verifies initialization order, quoting, cache behavior, and disconnect on failure; JdbcCoverageIntegrationTest verifies actual unqualified writes, catalog names containing spaces/quotes, nonexistent catalogs, and collisions with existing schema names. README now describes the active URL behavior. See V5.
+
+### B11. Calendar-aware timestamp methods silently ignore time zones [P1]
+
+Location: `sql/SkeletalResultSet.java:113-118`; `sql/QuackPreparedStatement.java:191-196`.
+
+With JVM zone UTC, retrieving timestamp `2024-01-02 03:04:05.123456` using an America/Los_Angeles Calendar yields 03:04:05Z instead of the 11:04:05Z returned by native JDBC. Binding instant 2026-01-01T00:00Z with a GMT+09 Calendar likewise stores 00:00 instead of 09:00. Implement the requested calendar interpretation and preserve fractional precision. Date/Time overloads also discard the argument; review their contracts separately rather than assuming native behavior is perfect. Timestamp examples confirmed.
+
+### B12. Small malformed inputs can trigger JVM resource failures [P1]
+
+Location: `codec/BinaryReader.java:182-188,265-269`; `message/VectorCodec.java:95-104`.
+
+List lengths directly become allocation capacities, bounds checks use overflowing offset+length arithmetic, and recursive compressed vectors have no nesting budget. In a heap-bounded local process, a five-byte maximum list length caused OutOfMemoryError, an overflowed byte-range check reached an impossible allocation, and about 60 KB of repeated CONSTANT headers caused StackOverflowError. Use remaining-length checks, checked arithmetic, allocation/decompressed-size budgets, and recursion limits. The HTTP response body is also buffered without a size cap, so harden that boundary too. These are local malformed-input probes, not claims about exploitation of a deployed server.
+
+## Additional Correctness Findings
+
+### B13. JDBC deadlines and cancellation do not enforce their contracts [P2]
+
+Location: `sql/SkeletalStatement.java:21-22`; `sql/QuackStatement.java:55-60`; `sql/SkeletalConnection.java:66-73,89-90`.
+
+setQueryTimeout, setNetworkTimeout, and cancel are no-ops; isValid ignores its timeout. A delayed transport completes despite all these controls. Pools and GUI tools cannot rely on their configured deadlines. Implement supported deadlines and validate arguments. Cancellation is deliberately documented as a no-op for GUI compatibility; revisit that tradeoff explicitly instead of treating a nonthrowing cancellation test as evidence that cancellation works. Where unsupported, communicate that honestly rather than silently accepting an ineffective control.
+
+### B14. HTTP requestTimeout does not bound response-body consumption [P2]
+
+Location: `transport/QuackHttpTransport.java:95-110`.
+
+On the current JDK 21.0.2, a local server sends headers and one byte promptly, then delays the rest of its response. With requestTimeout=500 ms, send successfully completes after about 1576 ms. HttpRequest.timeout alone does not enforce the whole operation's deadline in this scenario. Apply a deadline that covers body consumption and cancellation/cleanup of the underlying request. This is distinct from the ignored JDBC deadline methods. Exact behavior on JDK 17 was not separately measured.
+
+### B15. Statement result classification depends on a user-controlled alias [P2]
+
+Location: `sql/QuackStatement.java:77-96,106-117`.
+
+`execute("SELECT 42::BIGINT AS Count")` reports an update count of 42 and discards the query result. CREATE TABLE instead reports a ResultSet and update count -1. executeUpdate accepts ordinary SELECT and reports zero. Use reliable statement/result-kind information rather than column names, distinguish no-result DDL, and reject query results in executeUpdate. Confirmed live.
+
+### B16. Re-execution leaves previous results open and exposes stale state [P2]
+
+Location: `sql/QuackStatement.java:83-103`.
+
+Executing two queries on a statement leaves the old ResultSet open and readable. Failed re-execution leaves getResultSet pointing to the previous query; a successful update can discard the reference without closing it. Close/reset previous state before any new execution, including before transaction initialization can fail. Confirmed live.
+
+### B17. Connection close and commit do not manage dependent resources [P2]
+
+Location: `sql/QuackConnection.java:76-89,118-125`; `sql/SkeletalConnection.java:56-57`.
+
+After closing a connection, its statements and results still report open. After commit, results remain readable despite advertised CLOSE_CURSORS_AT_COMMIT. The connection never tracks its statements. Implement lifecycle ownership and consistent holdability. Apply it when enabling autocommit too. Confirmed live.
+
+### B18. Batch errors report unexecuted commands as successful [P2]
+
+Location: `sql/QuackStatement.java:38-47`; `sql/QuackPreparedStatement.java:138-146`.
+
+A three-entry batch with a duplicate-key error in the middle throws counts `[1, EXECUTE_FAILED, 0]`. The last command was never attempted but zero indicates a successful zero-row update. With stop-on-error behavior, return the successful prefix, or continue all commands and accurately populate every status. Test errors at each position in both batch implementations. Confirmed live.
+
+### B19. Missing bindings become NULL; extra parameter indices are accepted [P2]
+
+Location: `sql/QuackPreparedStatement.java:50-55,71-75`; `sql/QuackParameterMetaData.java:23-30`.
+
+Binding only parameter 2 in `SELECT ?, ?` fills parameter 1 with null rather than rejecting an incomplete bind. Indices beyond markerCount are accepted and ignored. Metadata accepts index zero. Separate unbound from bound-null, check bounds at each setter/metadata operation, and validate before execution or batch submission. Confirmed live.
+
+### B20. Typed setters discard SQL types and requested scale [P2]
+
+Location: `sql/QuackPreparedStatement.java:179-201`.
+
+setObject with string "42" and Types.INTEGER still yields VARCHAR; setNull with Types.VARCHAR yields untyped NULL; setting BigDecimal 1.239 as DECIMAL with scale 2 leaves 1.239. This affects casts, overload selection, metadata, and stored values. Retain type/scale with each binding, render typed literals or convert explicitly, and reject unsupported conversions. Confirmed live.
+
+### B21. setArray binds Java identity text, not array values [P2]
+
+Location: `sql/QuackPreparedStatement.java:218`; `sql/SqlLiteral.java:62`; related `sql/SkeletalConnection.java:79-83`.
+
+Binding createArrayOf("INTEGER", [1,2]) through setArray returns a string like `[Ljava.lang.Object;@...` from SELECT ?. getArray produces Object[] and SqlLiteral falls through to toString. createArrayOf also discards the requested element type. Implement typed array literals, including empty/null cases, or explicitly reject this binding. Confirmed live.
+
+### B22. Lazy FETCH errors escape SQLException and invalidate row state incorrectly [P2]
+
+Location: `sql/QuackResultSet.java:61-73,127-131`.
+
+An injected error fetching the next page escapes next as QuackServerException, whereas initial execution translates it to SQLException. The failed advance leaves the previous chunk with an out-of-range row index; a subsequent getter throws ArrayIndexOutOfBoundsException. Translate at the JDBC boundary and mark the current row invalid on failed advancement. Confirmed with a local transport fault.
+
+### B23. Column class metadata contradicts returned objects [P2]
+
+Location: `sql/QuackResultSetMetaData.java:62-77`.
+
+LIST/ARRAY claim List but return QuackArray; STRUCT claims Map but returns QuackStruct; MAP claims List but returns LinkedHashMap; UTINYINT claims Integer but returns Short. A consumer using getColumnClassName to interpret getObject can fail. Match actual supported wrappers/scalars. TIME_TZ also claims LocalTime while decoding a packed Long; a proper OffsetTime representation remains separate work. Confirmed live and compared with native JDBC.
+
+**Partial follow-up (2026-09-05):** B3 corrected the numeric class metadata, including UTINYINT. The nested and TIME_TZ mismatches remain open under B23.
+
+### B24. Column name normalization can return the wrong column [P2]
+
+Location: `sql/QuackResultSet.java:55-56,114-115`.
+
+For labels `stra\u00dfe` and `strasse`, getInt("strasse") returns the first value because uppercasing expands the former into the latter. Under Turkish locale, ID cannot be found as id. Use locale-independent matching without conflating distinct labels through multi-character case expansion. Locale.ROOT alone only solves the Turkish case. Confirmed against native JDBC.
+
+### B25. BLOB-to-string conversions are lossy or return array identities [P2]
+
+Location: `sql/QuackResultSet.java:140-144,312-315`.
+
+getString on bytes FF 00 FE substitutes Unicode replacement characters. Native DuckDB returns the lossless escaped form `\xFF\x00\xFE`. getObject(..., String.class) on an ASCII BLOB instead returns `[B@...`. Define a lossless conversion and share it across supported string getters, or reject unsupported typed conversions. Confirmed live.
+
+### B26. Long indices and stream lengths are narrowed unsafely [P2]
+
+Location: `sql/QuackArray.java:52-56`; `sql/QuackBlob.java:30-60`; `sql/QuackPreparedStatement.java:220-257`.
+
+Array and Blob slices at 4294967297 return the first element/byte. A Blob stream with negative length -4294967296 is accepted as zero. A character stream length of 4294967297 becomes one character; other values throw unchecked errors. The reader helper also consumes past the requested character count. Validate ranges and arithmetic as long before narrowing, and bound each read to the remaining requested count. Reproduced with small in-memory objects/streams.
+
+### B27. Closed/freed objects retain payloads [P2]
+
+Location: `sql/QuackResultSet.java:83-86`; `sql/QuackArray.java:21-23,85-88`; `sql/QuackStatement.java:170-175`.
+
+ResultSet.close clears cursor buffers but retains currentChunk; Statement.close retains its result reference. Array.free sets a flag while retaining its list. A one-megabyte payload remains reachable through each tested closed/freed handle. Release owned references while preserving the validity of independently returned JDBC values where required. Confirmed by inspecting references in local probes; no unbounded application-wide heap leak is claimed without retained handles.
+
+### B28. GEOMETRY APPEND omits the WKB discriminator [P2]
+
+Location: `message/VectorCodec.java:719-739,315-318`.
+
+The decoder optionally consumes field 99, but the encoder never emits it. Appending WKB POINT(1 2) makes DuckDB interpret it as legacy SPATIAL data and fail with HTTP 500. Adding field 99=WKB to the same local request succeeds and preserves bytes. Emit and validate the discriminator. Confirmed against released 1.5.5 as well as the available prerelease artifact.
+
+### B29. Timestamp encoding mishandles numeric boundaries [P2]
+
+Location: `message/VectorCodec.java:933-945`.
+
+The multiplyExact of seconds can fail even when adding the positive fraction would produce a valid negative endpoint; the following unchecked addition can overflow in the opposite direction. Valid TIMESTAMP_NS 1677-09-21T00:12:43.145224194 throws; out-of-range 2262-04-11T23:47:16.999999999 wraps into 1677. Use a checked final conversion that handles negative-boundary cancellation and reserved sentinels. Confirmed locally.
+
+### B30. Special temporal values turn into unrelated ordinary values [P2]
+
+Location: `message/VectorCodec.java:535-538,581-609`.
+
+DATE infinity becomes +5881580-07-11; TIMESTAMP_NS infinity becomes an ordinary-looking date in 2262; TIME 24:00 becomes 00:00. Define a deliberate representation or reject unsupported special values instead of silently substituting a finite value. Confirmed against 1.5.5.
+
+### B31. BIGNUM binary storage is decoded as UTF-8 [P2]
+
+Location: `message/VectorCodec.java:629-633`; related `sql/JdbcTypeMap.java:26`.
+
+SELECT 123456789::BIGNUM returns binary-header garbage containing replacement characters. The physical VARCHAR fallback assumes text even for nontextual logical storage. Implement an explicit decoder, return a lossless documented representation, or throw QuackUnsupportedTypeException. Lack of feature support is acceptable; silent corruption is not. Audit other binary logical types using the same physical storage. Confirmed live.
+
+### B32. Vector shapes and LEB128 terminal bits are incompletely checked [P2]
+
+Location: `message/VectorCodec.java:335-410`; `codec/BinaryReader.java:115-126,150-165`.
+
+A two-row VARCHAR vector with one encoded element decodes successfully as size one. Missing STRUCT children and invalid LIST offsets throw index errors. ARRAY multiplication is unchecked. Separately, nine 0x80 bytes followed by 0x02 overflow the tenth-byte shift and are accepted as zero by both LEB readers. Enforce cardinalities, child counts, slice bounds, checked arithmetic, and valid final-byte payload/sign-extension bits. Reproduced with independent local byte fixtures.
+
+### B33. getUDTs loses filtering and scalar alias base types [P2]
+
+Location: `sql/QuackDatabaseMetaData.java:311-326`.
+
+Filtering for Types.STRUCT returns ENUM and INTEGER aliases too. An INTEGER alias reports BASE_TYPE=OTHER rather than INTEGER. Native DuckDB 1.5.5.0 behaves correctly for both. Restore reference filtering and base-type mapping. Confirmed with live custom types.
+
+### B34. STRUCT metadata emits invalid reserved-word identifiers [P2]
+
+Location: `sql/JdbcTypeMap.java:107-113,129-134`.
+
+A field named select produces STRUCT(select INTEGER), which cannot be used in a subsequent cast. Native JDBC quotes it. This is already acknowledged in CHANGELOG's known gaps but remains a real metadata/DDL round-trip defect. Quote reserved identifiers or otherwise produce valid DuckDB type syntax. Confirmed live.
+
+### B35. getTime fails on valid TIMESTAMPTZ values [P2]
+
+Location: `sql/QuackResultSet.java:228-234`.
+
+OffsetDateTime has no conversion branch and falls into Time.valueOf with an ISO date-time string, yielding NumberFormatException. Native JDBC returns the time component for the tested timestamp. Handle the logical type explicitly and maintain a JDBC exception boundary. Confirmed live.
+
+### B36. setMaxRows and unsupported isolation levels silently succeed [P2]
+
+Location: `sql/SkeletalStatement.java:18-19`; `sql/SkeletalConnection.java:36-37`.
+
+setMaxRows(1) still returns all three rows of a range query. This is a limit, unlike the fetch-size hint. setTransactionIsolation(SERIALIZABLE) succeeds while getTransactionIsolation remains REPEATABLE_READ. Enforce implemented options and reject unsupported/invalid requests. Audit requested result type, concurrency, and holdability for the same accept-but-ignore pattern. Confirmed live for max rows and isolation.
+
+### B37. commit/rollback silently succeed in autocommit mode [P2]
+
+Location: `sql/QuackConnection.java:76-89`; test `src/test/java/com/gizmodata/quack/jdbc/sql/QuackConnectionTransactionTest.java:98-109`.
+
+JDBC requires SQLException when these methods are called in autocommit mode. The current implementation and a unit test endorse success. Reject this case while preserving a harmless no-op in manual mode with no pending transaction. Confirmed live. This is less severe than the actual append rollback failure.
+
+### B38. Plain HTTP resolution changes the Host header [P2]
+
+Location: `transport/QuackHttpTransport.java:141-173`.
+
+All HTTP hostnames are rewritten to address literals to support fallback. A local request for http://localhost:port/quack sends Host=127.0.0.1:port. Host-routed HTTP gateways can reject or misroute it, and custom ProxySelectors see the rewritten URI rather than the logical endpoint. Host is reserved by URI validation, preventing an ordinary property workaround. Preserve logical authority while handling connection fallback, or narrowly scope fallback to situations where rewriting is acceptable. Confirmed with a local HTTP server; no deployed gateway was contacted.
+
+### B39. Invalid TLS values silently select plaintext [P2]
+
+Location: `transport/QuackUri.java:114,178-183`.
+
+`tls=treu` produces an HTTP endpoint without error. Parse explicit true and false spellings and reject other nonblank values so a configuration typo cannot silently remove encryption. This is not a demand to change the default for existing local URLs. Confirmed locally.
+
+### B40. URI diagnostics expose authentication material [P2]
+
+Location: `transport/QuackUri.java:18-23,47-63,120-125`.
+
+The record's generated toString includes the resolved token and all properties, including password/header credentials. URL-validation errors include the original URL, so an invalid URL with a token copies it into an exception message. Use redacted diagnostics, including nested URI parsing exceptions, and avoid logging raw properties. Verified using a synthetic placeholder only; no real secrets were inspected or disclosed.
+
+## Lower-Priority Issues And Tradeoffs
+
+- **L1. Cursor position and closed-state checks.** `sql/QuackResultSet.java:74-78,94-95`: getRow returns the last row number after exhaustion instead of zero. Confirmed on a one-row result. Closed-state checks are also inconsistent across simple getters.
+- **L2. Metadata statement ownership.** `sql/QuackDatabaseMetaData.java:30-33` and `sql/SkeletalStatement.java:48-49`: closing metadata results does not close their internally created statements, and closeOnCompletion is a no-op. Native JDBC closes the metadata statement. No independent server leak was established from this state difference alone.
+- **L3. Abandoned server results.** `sql/QuackSession.java:266-274`: closing a partially read result deliberately leaves server result state until disconnect. This is a documented protocol limitation, not an accidental omission of an available release message. It remains an important operational concern for long-lived pooled connections; measure server memory during repeated abandoned large queries and evaluate cleanup options supported by the pinned protocol.
+- **L4. Stale runtime identity.** `sql/QuackDriver.java:17-18`, `sql/QuackSession.java:76`, `sql/QuackDatabaseMetaData.java:340-345`: identity is stale: driver reports 0.1/0.1.0 while Maven is 0.7.0-SNAPSHOT, and database minor version is hardcoded zero. Derive build identity from one authoritative source and report actual server identity where applicable.
+- **L5. Stale current-facing documentation.** `README.md:20,48,55`: tested-server and dependency examples lag the released/current versions. CLAUDE's roadmap still lists append and JDBC nested wrapping as future work despite implementation. Historical changelog sections need not be rewritten, but current-facing guidance should be accurate.
+- **L6. Stale code descriptions and unused scaffolding.** `message/VectorCodec.java:30-44` and `message/MessageCodec.java:257-259`: stale implementation descriptions and an obsolete UNUSED collection add noise. Remove these after correctness work rather than spending review effort on cosmetic rewrites first.
+
+## Native-Parity Questions
+
+The native driver is a valuable oracle, not proof of JDBC specification compliance.
+
+- **C1. Column type metadata parity.** getColumns reports OTHER for several array/temporal variants in both drivers. See `sql/QuackDatabaseMetaData.java:126-137`.
+- **C2. Index metadata shape parity.** getIndexInfo omits INDEX_QUALIFIER and has nonstandard ordering in both drivers. See `sql/QuackDatabaseMetaData.java:180-185`.
+- **C3. Function metadata shape parity.** getFunctions omits SPECIFIC_NAME and swaps standard schema/name ordering in both drivers. See `sql/QuackDatabaseMetaData.java:280-283`.
+- **C4. Conversion and narrowing parity.** Some unchecked conversion errors and narrowing getters also occur in native 1.5.5.0. B3 focuses on the driver directing consumers into an undersized representation, not claiming all explicit narrowing is unique to Quack.
+
+Before changing inherited metadata shapes, decide whether to preserve native compatibility or correct the JDBC contract, and test the decision in DBeaver. DBeaver UI behavior was not directly exercised during this review.
+
+Explicitly unsupported FSST, native bind parameters, array ResultSets, updatable/scrollable cursors, and recursive nested JDBC wrapping were not counted as defects merely because they are missing. Returning incorrect data or pretending a requested control works is a different category.
+
+## Build And Coverage Improvements
+
+- **I1. Make oracle parity part of CI.** `.github/workflows/ci.yml:35-36` runs the default profile; `pom.xml:64,108-110` excludes oracle tests unless requested. The release gate therefore does not exercise the advertised parity suite.
+- **I2. Gate snapshot publication on successful verification.** `.github/workflows/publish-snapshot.yml:3-6,25-29` is a separate push-triggered workflow using -DskipTests, independent of CI success. A failing main revision can still be deployed as a snapshot.
+- **I3. Require integration execution in CI.** Local auto-skipping is useful, but CI should fail if the fixture is unavailable and assert/log the CLI and loaded extension versions. Keep released-server checks separate from prerelease compatibility runs.
+- **I4. Expand oracle checks beyond type codes/names.** `OracleParityIntegrationTest.java:82-86` compares only these two properties; add actual values, wrapper class compatibility, null handling, exact numeric boundaries, unsigned values, temporal zones, tuples, and typed conversions.
+- **I5. Add JDBC state-transition and failure-path tests.** Cover close propagation, re-execution, commit holdability, partial batches, incomplete parameters, controls under blocked I/O, and FETCH failure after an initial page. Several current tests verify only that a method does not throw.
+- **I6. Add independent wire fixtures and bounded malformed-input tests.** Encoder/decoder self-round-trips cannot reveal shared mistakes or differences from server null sentinels. Add dedicated logical-type codec tests, default-omitted fields, unknown metadata, vector shapes, LEB overflow, nesting limits, and geometry wire fixtures.
+- **I7. Cover runtime/client diversity proportionately.** Test Java 17 and a current LTS, Linux and the primary desktop OSes, locale/timezone variants, and a small explicit DBeaver/DataGrip smoke-test checklist. Current CI is Ubuntu/JDK 17, while mise selects JDK 21.
+- **I8. Harden release workflow permissions and dependencies.** Reduce release-job token permissions to what each job requires and consider immutable action revisions/artifact reuse. The workflow currently grants contents:write globally. These are hardening recommendations, not a finding that credentials have been compromised.
+- **I9. Measure performance after data correctness is fixed.** Typed vectors are useful, but ResultSet primitive getters still route through rawValue/getObject and box values, contrary to the old no-boxing claim. Benchmark representative scans and allocation before changing that path; do not undertake a broad rewrite based on style preference.
+
+## Strengths
+
+- **S1. Layer separation.** Clear separation of protocol, types, transport, and JDBC layers.
+- **S2. Runtime footprint.** Java 17 compilation target and no runtime dependencies.
+- **S3. Transport testability.** Pluggable transport enables useful fault-injection tests without live services.
+- **S4. Lazy fetching.** Avoids collecting every result page in client memory.
+- **S5. Real-server integration.** Existing integration tests exercise real DuckDB, including append and nested values.
+- **S6. Indirect token-source restrictions.** Token environment/file sources are restricted to connection Properties, with URL rejection tests.
+- **S7. HTTPS authority preservation.** HTTPS retains the original hostname for certificate verification and SNI.
+- **S8. Native oracle availability.** DuckDB's native JDBC driver is already available as an optional behavioral oracle.
+
+These are good foundations. The highest-value work is tightening exact value semantics, transaction/resource ownership, and honest JDBC capability behavior, not reorganizing packages.
+
+## Verification
+
+### V1. Full-suite verification
+
+Full command from the checkout during the original review:
+
+```bash
+QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn --batch-mode --no-transfer-progress -Poracle verify
+```
+
+Result: BUILD SUCCESS; 159 tests reported, zero failures, zero errors, one skip for IPv6 availability. All integration suites ran. Runtime: Java 21.0.2, Maven 3.9.16; project compilation targets Java 17. Native oracle: duckdb_jdbc 1.5.5.0.
+
+### V2. Focused reproduction evidence
+
+Reviewers also compiled source independently with --release 17 and ran focused probes. The codec review initially used the available 1.5.6 development artifact; the important live codec examples were subsequently rerun and confirmed against released 1.5.5. A successful test suite does not negate the independently reproduced gaps above.
+
+Probe artifacts are under `/tmp/opencode/quack-statement-audit/`, `/tmp/opencode/quack-result-review/`, `/tmp/opencode/quack-codec-review-905/`, and `/tmp/opencode/QuackTransportReviewProbe.java`. They are outside the project and are not permanent regression tests.
+
+### V3. Verification limits
+
+No publication workflows were executed, no production server was contacted, and no DBeaver UI compatibility certification is implied. V1-V2 describe the original review. V5-V6 separately record approved implementation passes; they do not constitute verification of every remaining open finding.
+
+### V4. Workspace preservation
+
+At the end of the original review, git status showed only the pre-existing modified CLAUDE.md and untracked DUCKDB_COMPATIBILITY.md. Those files remain untouched by the review and implementation. The implementation changes driver code, targeted tests, README, CHANGELOG, and this report. No commit or publication was requested or performed.
+
+### V5. Approved implementation verification
+
+Approved order: B1, B5, B9, B10, B4. Implemented in `0.7.0-SNAPSHOT` with no new runtime dependencies. Targeted tests ran after each fix, followed by an independent diff review and regression tests for the additional Unicode preprocessing, floating-point representation, and catalog/schema ambiguity cases it identified.
+
+Final full-build command:
+
+```bash
+QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn --batch-mode --no-transfer-progress -Poracle clean verify
+```
+
+Result on 2026-09-05: BUILD SUCCESS; 182 tests reported, zero failures, zero errors, one IPv6 availability skip. This adds 23 test methods to the original oracle run, with multiple boundary cases inside several methods. All integration suites ran against released DuckDB 1.5.5 and the native oracle remained 1.5.5.0. Java runtime 21.0.2; Java 17 compilation target. `git diff --check` passed. Built artifact: `target/quack-jdbc-0.7.0-SNAPSHOT.jar`.
+
+At the end of this first pass, only B1, B5, B9, B10, and B4 were resolved. B6 was still a known limitation for valid signed-128-bit APPEND values; the subsequent V6 pass resolves it separately along with B2 and B3. B1's explicit Unicode-whitespace template restriction remains intentional; separately bound Unicode values are preserved through the supported UTF-8 expression.
+
+### V6. B6 and B2/B3 verification
+
+Approved follow-up: B6, then B2+B3 together. Added 11 test methods and expanded existing signed-integer and wide-decimal matrices. B6's new tests reproduced the original failure before the helper was changed. Native metadata was checked against duckdb_jdbc 1.5.5.0 and its tagged Java source; oracle tests compare all ten integer logical types, metadata-driven getters, and fixed/variable arrays. An independent read-only review found no defects in the scoped changes.
+
+Full builds on 2026-09-05:
+
+```bash
+QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn --batch-mode --no-transfer-progress clean verify
+QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn --batch-mode --no-transfer-progress -Poracle verify
+```
+
+| Profile | Tests | Failures | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| Default clean verify | 189 | 0 | 0 | 1 |
+| Oracle verify | 193 | 0 | 0 | 1 |
+
+The sole skip is the existing IPv6 availability test; all integration suites ran. Runtime: Java 21.0.2, Java 17 compilation target, DuckDB CLI 1.5.5, native oracle 1.5.5.0. `git diff --check` passed. Built artifact remains `target/quack-jdbc-0.7.0-SNAPSHOT.jar`; no new runtime dependencies, commits, or publications. Resolved IDs now include B1-B6, B9, and B10; other findings remain open, with B23's numeric subset addressed by B3.
+
+## Top Five Priorities
+
+This is the original approved implementation order, now completed as recorded under each ID and V5. It is retained for traceability, not presented as five outstanding tasks. The ranking prioritized security exposure and the risk of silently persisting incorrect data or violating rollback expectations, not ease of implementation. Original complexity estimates included a complete fix and targeted regression tests; they were not elapsed-time commitments. Low meant localized conversion/validation work, Medium coordinated paths and a boundary-test matrix, and High substantial semantic or API-design risk.
+
+| Rank | ID | Work | Complexity | Why and implementation scope |
+| --- | --- | --- | --- | --- |
+| 1 | B1 | Safe prepared-parameter scanning | Medium-High | Parameter values can escape their intended boundary. Implement one lexical scanner covering DuckDB comments and quoting, shared by counting and substitution, with adversarial and ordinary SQL regression cases. No native-binding protocol change is needed. |
+| 2 | B5 | Reject numeric APPEND overflow | Medium | Currently stores silently corrupted values. Check signed/unsigned ranges and DECIMAL precision across physical widths; test endpoints and server-backed rejection/read-back. Coordinate shared range logic with B6 if separately authorized. |
+| 3 | B9 | Make connection-owned APPEND transactional | Medium-High | Rollback can leave supposedly uncommitted data persisted. Reconcile connection transaction ownership with the public low-level session API without breaking standalone sessions; test first append, commit, rollback, and subsequent appends. |
+| 4 | B10 | Select and validate the URL catalog | Low-Medium | Unqualified writes can reach the wrong database. Initialize the server catalog before caching it, handle failed initialization cleanup, and test attached, nonexistent, and quoted catalog names. |
+| 5 | B4 | Preserve exact numeric conversions | Low-Medium | Affects common BIGINT/DECIMAL reads and decimal writes. Remove floating-point and long intermediates for exact values; test large positive/negative integers, scales, and typed BigInteger retrieval. |
+
+These ranks do not change any finding's ID. The approved follow-up has also resolved B6 and B2+B3 (V6). B7, B8, B11, and B12 remain P1 work, not optional follow-ups. Use I4-I6 to broaden regression coverage, address JDBC execution/lifecycle and deadlines (B13-B22), resolve remaining metadata/value alignment (B23 and C1-C4), and promote verification into CI (I1-I3). Track remaining cleanup and performance work using L1-L6 and I7-I9.

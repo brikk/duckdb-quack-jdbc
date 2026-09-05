@@ -62,6 +62,12 @@ class SqlLiteralTest {
     }
 
     @Test
+    void encodesNormalizationSensitiveStringsAsAsciiUtf8Expressions() {
+        assertEquals("decode(from_hex('78c2a079'))", SqlLiteral.render("x\u00a0y"));
+        assertEquals("decode(from_hex('c2a05c27f09d849e'))", SqlLiteral.render("\u00a0\\'\ud834\udd1e"));
+    }
+
+    @Test
     void rendersBlobAsHexLiteral() {
         byte[] bytes = {(byte) 0xCA, (byte) 0xFE, 0x00, 0x7F};
         assertEquals("'\\xCA\\xFE\\x00\\x7F'::BLOB", SqlLiteral.render(bytes));

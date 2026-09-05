@@ -8,13 +8,8 @@ public record HugeIntParts(long upper, long lower) {
     private static final BigInteger UINT64_MASK = TWO_POW_64.subtract(BigInteger.ONE);
 
     public static HugeIntParts ofSigned(BigInteger value) {
-        BigInteger normalized = value.mod(TWO_POW_64.shiftLeft(64));
-        BigInteger lower = normalized.and(UINT64_MASK);
-        BigInteger upperUnsigned = normalized.shiftRight(64).and(UINT64_MASK);
-        BigInteger upperSigned = upperUnsigned.bitLength() > 63
-                ? upperUnsigned.subtract(TWO_POW_64)
-                : upperUnsigned;
-        return new HugeIntParts(upperSigned.longValueExact(), lower.longValueExact());
+        // The upper word enforces the signed 128-bit range; the lower word holds raw bits.
+        return new HugeIntParts(value.shiftRight(64).longValueExact(), value.longValue());
     }
 
     public BigInteger toSignedBigInteger() {

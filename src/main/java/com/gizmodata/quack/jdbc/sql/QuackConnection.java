@@ -26,11 +26,20 @@ public final class QuackConnection extends SkeletalConnection {
     public QuackConnection(QuackUri uri, QuackTransportFactory transportFactory) {
         this.uri = uri;
         try {
-            this.session = QuackSession.connect(uri, transportFactory);
+            this.session = QuackSession.connect(uri, transportFactory, this);
         } catch (RuntimeException e) {
             throw new QuackException(e.getMessage(), e);
         }
-        this.catalog = uri.database().orElse(null);
+        try {
+            if (uri.database().isPresent()) {
+                String requested = uri.database().get();
+                session.cursor("USE " + quoteIdent(requested) + ".\"main\"").close();
+                this.catalog = requested;
+            }
+        } catch (RuntimeException e) {
+            session.close();
+            throw e;
+        }
     }
 
     public QuackSession session() {
@@ -50,7 +59,11 @@ public final class QuackConnection extends SkeletalConnection {
     @Override
     public PreparedStatement prepareStatement(String sql) throws SQLException {
         checkOpen();
-        return new QuackPreparedStatement(this, sql);
+        try {
+            return new QuackPreparedStatement(this, sql);
+        } catch (QuackException e) {
+            throw new SQLException(e.getMessage(), e);
+        }
     }
 
     @Override

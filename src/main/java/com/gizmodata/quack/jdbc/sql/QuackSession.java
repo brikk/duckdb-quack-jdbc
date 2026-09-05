@@ -1,5 +1,6 @@
 package com.gizmodata.quack.jdbc.sql;
 
+import com.gizmodata.quack.jdbc.QuackException;
 import com.gizmodata.quack.jdbc.QuackProtocolException;
 import com.gizmodata.quack.jdbc.codec.HugeIntParts;
 import com.gizmodata.quack.jdbc.codec.QuackConstants;
@@ -13,6 +14,7 @@ import com.gizmodata.quack.jdbc.transport.QuackTransportFactory;
 import com.gizmodata.quack.jdbc.transport.QuackUri;
 import com.gizmodata.quack.jdbc.type.LogicalType;
 
+import java.sql.SQLException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -26,13 +28,19 @@ public final class QuackSession implements AutoCloseable {
 
     private final QuackUri uri;
     private final QuackTransport transport;
+    private final QuackConnection connection;
     private final AtomicLong queryIdSeq = new AtomicLong(1);
     private volatile String connectionId;
     private volatile boolean closed;
 
     public QuackSession(QuackUri uri, QuackTransport transport) {
+        this(uri, transport, null);
+    }
+
+    private QuackSession(QuackUri uri, QuackTransport transport, QuackConnection connection) {
         this.uri = Objects.requireNonNull(uri, "uri");
         this.transport = Objects.requireNonNull(transport, "transport");
+        this.connection = connection;
     }
 
     public QuackSession(QuackUri uri, QuackHttpTransport transport) {
@@ -50,9 +58,16 @@ public final class QuackSession implements AutoCloseable {
     }
 
     public static QuackSession connect(QuackUri uri, QuackTransportFactory transportFactory) {
+        return connect(uri, transportFactory, null);
+    }
+
+    static QuackSession connect(QuackUri uri, QuackTransportFactory transportFactory,
+                                QuackConnection connection) {
         Objects.requireNonNull(transportFactory, "transportFactory");
-        return connect(uri, Objects.requireNonNull(
-                transportFactory.create(uri), "transportFactory returned null"));
+        QuackSession session = new QuackSession(uri, Objects.requireNonNull(
+                transportFactory.create(uri), "transportFactory returned null"), connection);
+        session.handshake();
+        return session;
     }
 
     public QuackUri uri() {
@@ -115,6 +130,10 @@ public final class QuackSession implements AutoCloseable {
      * match the destination table; rows are appended atomically as a
      * single server-side batch.
      *
+     * <p>Sessions obtained from {@link QuackConnection#session()} honor that
+     * connection's auto-commit mode, starting its transaction if needed.
+     * Independently connected sessions leave transaction management to the caller.
+     *
      * <p>This is the bulk-load fast-path — it sends column-oriented
      * binary data directly, bypassing per-row INSERT parsing. For typical
      * workloads it's an order of magnitude faster than
@@ -129,6 +148,13 @@ public final class QuackSession implements AutoCloseable {
         }
         if (chunk == null) {
             throw new QuackProtocolException("appendChunk: chunk is required");
+        }
+        if (connection != null) {
+            try {
+                connection.beginTransactionIfNeeded();
+            } catch (SQLException e) {
+                throw new QuackException("Could not start transaction for APPEND", e);
+            }
         }
         QuackMessage.AppendRequest request = new QuackMessage.AppendRequest(
                 MessageHeader.of(MessageType.APPEND_REQUEST)
