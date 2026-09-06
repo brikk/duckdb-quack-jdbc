@@ -8,6 +8,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **B16:** Re-execution closes and clears previous results before transaction
+  startup or prepared-parameter processing can fail, preventing stale result
+  sets and update counts after failed execution.
 - **B1:** Prepared parameters are located with a shared SQL-aware scanner
   covering comments, quoted identifiers, escape strings, and dollar quotes.
   Literal boundaries and negative-number grouping preserve parsing semantics.

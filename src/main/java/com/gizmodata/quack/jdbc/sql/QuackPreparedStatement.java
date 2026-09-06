@@ -201,16 +201,22 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
 
     @Override
     public ResultSet executeQuery() throws SQLException {
+        checkOpen();
+        resetExecutionState();
         return executeQuery(interpolate());
     }
 
     @Override
     public int executeUpdate() throws SQLException {
+        checkOpen();
+        resetExecutionState();
         return executeUpdate(interpolate());
     }
 
     @Override
     public boolean execute() throws SQLException {
+        checkOpen();
+        resetExecutionState();
         return execute(interpolate());
     }
 
@@ -235,9 +241,11 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
     @Override
     public int[] executeBatch() throws SQLException {
         checkOpen();
+        resetExecutionState();
         int[] counts = new int[paramBatch.size()];
         for (int i = 0; i < paramBatch.size(); i++) {
             try {
+                resetExecutionState();
                 counts[i] = executeUpdate(interpolate(paramBatch.get(i)));
             } catch (SQLException e) {
                 paramBatch.clear();

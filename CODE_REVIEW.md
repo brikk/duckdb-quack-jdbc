@@ -177,6 +177,8 @@ Location: `sql/QuackStatement.java:83-103`.
 
 Executing two queries on a statement leaves the old ResultSet open and readable. Failed re-execution leaves getResultSet pointing to the previous query; a successful update can discard the reference without closing it. Close/reset previous state before any new execution, including before transaction initialization can fail. Confirmed live.
 
+**Resolution (2026-09-06): resolved.** Shared execution-state reset closes the previous ResultSet and clears the update count before query execution, lazy BEGIN, prepared interpolation, or batch execution. Parameter setters and addBatch do not close active results. Targeted QuackStatementExecutionTest verification passed 18 cases, including query/update transitions, failed BEGIN, missing bindings, rendering errors, empty batches, and close/getMoreResults behavior. Independent review found no scoped B16 issues. B15 result classification remains separate protocol work.
+
 ### B17. Connection close and commit do not manage dependent resources [P2]
 
 Location: `sql/QuackConnection.java:76-89,118-125`; `sql/SkeletalConnection.java:56-57`.

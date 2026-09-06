@@ -38,6 +38,7 @@ public class QuackStatement extends SkeletalStatement {
     @Override
     public int[] executeBatch() throws SQLException {
         checkOpen();
+        resetExecutionState();
         int[] counts = new int[batch.size()];
         for (int i = 0; i < batch.size(); i++) {
             try {
@@ -83,6 +84,7 @@ public class QuackStatement extends SkeletalStatement {
     @Override
     public boolean execute(String sql) throws SQLException {
         checkOpen();
+        resetExecutionState();
         connection.beginTransactionIfNeeded();
         try {
             QuackSession.Cursor cursor = connection.session().cursor(sql);
@@ -151,12 +153,17 @@ public class QuackStatement extends SkeletalStatement {
      */
     @Override
     public boolean getMoreResults() {
+        resetExecutionState();
+        return false;
+    }
+
+    /** Discard the previous execution before transaction start or parameter validation can fail. */
+    protected void resetExecutionState() {
         if (currentResultSet != null) {
             currentResultSet.close();
             currentResultSet = null;
         }
         updateCount = -1;
-        return false;
     }
 
     @Override
