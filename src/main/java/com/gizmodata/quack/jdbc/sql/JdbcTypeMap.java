@@ -24,7 +24,7 @@ public final class JdbcTypeMap {
             case DOUBLE -> Types.DOUBLE;
             case DECIMAL -> Types.DECIMAL;
             case CHAR -> Types.CHAR;
-            case VARCHAR, STRING_LITERAL, BIGNUM -> Types.VARCHAR;
+            case VARCHAR, STRING_LITERAL -> Types.VARCHAR;
             case BLOB, BIT, GEOMETRY -> Types.BINARY;
             case DATE -> Types.DATE;
             case TIME, TIME_NS, TIME_TZ -> Types.TIME;

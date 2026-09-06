@@ -596,6 +596,8 @@ public final class VectorCodec {
             case DATE -> LocalDate.ofEpochDay(checkedDateDays(value));
             case BIGINT -> value;
             case UBIGINT -> new HugeIntParts(0, value).toUnsignedBigInteger();
+            case BIGNUM, TYPE, AGGREGATE_STATE -> throw new QuackUnsupportedTypeException(
+                    "Decoding non-null " + type.id() + " values is not supported");
             default -> decodeInt64LogicalValue(type, value);
         };
     }
@@ -664,10 +666,11 @@ public final class VectorCodec {
     private static Object decodeStringLikeValue(BinaryReader reader, LogicalType type, byte[] raw) {
         return switch (type.id()) {
             case BLOB, GEOMETRY, BIT -> raw;
-            default -> {
+            case VARCHAR, CHAR -> {
                 reader.reserve(64L + 4L * raw.length);
                 yield new String(raw, java.nio.charset.StandardCharsets.UTF_8);
             }
+            default -> throw new QuackUnsupportedTypeException("Decoding non-null " + type.id() + " values is not supported");
         };
     }
 
@@ -1079,6 +1082,10 @@ public final class VectorCodec {
 
     private static byte[] encodeStringLikeValueForWrite(LogicalType type, Object value) {
         if (value == null) return new byte[0];
+        switch (type.id()) {
+            case VARCHAR, CHAR, BLOB, BIT, GEOMETRY -> { }
+            default -> throw new QuackUnsupportedTypeException("Encoding non-null " + type.id() + " values is not supported");
+        }
         if (value instanceof byte[] b) return b;
         return value.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }

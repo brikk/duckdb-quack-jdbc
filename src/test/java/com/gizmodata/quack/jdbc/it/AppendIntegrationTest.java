@@ -1,6 +1,7 @@
 package com.gizmodata.quack.jdbc.it;
 
 import com.gizmodata.quack.jdbc.QuackProtocolException;
+import com.gizmodata.quack.jdbc.QuackUnsupportedTypeException;
 import com.gizmodata.quack.jdbc.message.DataChunk;
 import com.gizmodata.quack.jdbc.message.DecodedVector;
 import com.gizmodata.quack.jdbc.message.Validity;
@@ -64,6 +65,22 @@ public class AppendIntegrationTest {
 
     private QuackConnection connect() throws SQLException {
         return (QuackConnection) DriverManager.getConnection(server.jdbcUrl());
+    }
+
+    @Test
+    void unsupportedBignumAppendCannotWriteCorruptedRows() throws Exception {
+        LogicalType type = LogicalType.of(LogicalTypeId.BIGNUM);
+        try (QuackConnection c = connect(); Statement s = c.createStatement()) {
+            s.execute("CREATE TEMP TABLE bignum_append (v BIGNUM)");
+            for (Object value : new Object[]{new BigInteger("123456789"), "123456789", new byte[]{(byte) 0x80, 0, 1, 0}}) {
+                assertThrows(QuackUnsupportedTypeException.class, () -> c.session().appendChunk("main", "bignum_append",
+                        new DataChunk(2, List.of(type), List.of(new DecodedVector.ObjectVec(type, new Object[]{null, value})))));
+            }
+            try (ResultSet rs = s.executeQuery("SELECT count(*) FROM bignum_append")) {
+                assertTrue(rs.next());
+                assertEquals(0, rs.getInt(1));
+            }
+        }
     }
 
     @Test

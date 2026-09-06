@@ -3,9 +3,12 @@ package com.gizmodata.quack.jdbc.transport;
 import com.gizmodata.quack.jdbc.QuackException;
 import com.gizmodata.quack.jdbc.QuackProtocolException;
 import com.gizmodata.quack.jdbc.QuackServerException;
+import com.gizmodata.quack.jdbc.QuackUnsupportedTypeException;
 import com.gizmodata.quack.jdbc.codec.DecodeLimits;
 import com.gizmodata.quack.jdbc.codec.HugeIntParts;
 import com.gizmodata.quack.jdbc.message.MessageCodec;
+import com.gizmodata.quack.jdbc.message.DataChunk;
+import com.gizmodata.quack.jdbc.message.DecodedVector;
 import com.gizmodata.quack.jdbc.message.MessageHeader;
 import com.gizmodata.quack.jdbc.message.MessageType;
 import com.gizmodata.quack.jdbc.message.QuackMessage;
@@ -321,6 +324,19 @@ class QuackHttpTransportLimitsTest {
                 client, Duration.ofSeconds(2), valid);
         assertEquals(SUCCESS, transport.send(REQUEST));
         assertEquals(valid.values().iterator().next(), client.request.headers().firstValue(valid.keySet().iterator().next()).orElseThrow());
+    }
+
+    @Test
+    void unsupportedBinaryAppendValuesNeverReachHttp() {
+        for (LogicalTypeId id : new LogicalTypeId[]{LogicalTypeId.BIGNUM, LogicalTypeId.TYPE, LogicalTypeId.AGGREGATE_STATE}) {
+            StubClient client = new StubClient(MessageCodec.encode(SUCCESS));
+            LogicalType type = LogicalType.of(id);
+            QuackMessage request = new QuackMessage.AppendRequest(MessageHeader.of(MessageType.APPEND_REQUEST),
+                    Optional.of("main"), "test", new DataChunk(1, List.of(type),
+                    List.of(new DecodedVector.ObjectVec(type, new Object[]{new byte[]{(byte) 0x80, 0, 1, 0}}))));
+            assertThrows(QuackUnsupportedTypeException.class, () -> transport(client, DecodeLimits.DEFAULT).send(request));
+            assertEquals(0, client.sends);
+        }
     }
 
     @Test

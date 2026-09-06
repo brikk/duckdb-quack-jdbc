@@ -58,6 +58,40 @@ public class NestedReadEdgeIntegrationTest {
     }
 
     @Test
+    void bignumIsExplicitlyUnsupportedUnlessCastToText() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            for (String value : new String[]{"0", "123456789", "-123456789", "340282366920938463463374607431768211457"}) {
+                String expression = "'" + value + "'::BIGNUM";
+                for (String nested : new String[]{expression, "[NULL::BIGNUM, " + expression + "]",
+                        "array_value(" + expression + ")", "{'v': " + expression + "}", "row(" + expression + ")",
+                        "MAP {1: " + expression + "}"}) {
+                    SQLException error = assertThrows(SQLException.class, () -> s.executeQuery("SELECT " + nested + " AS v"));
+                    assertInstanceOf(QuackUnsupportedTypeException.class, error.getCause());
+                }
+                try (ResultSet rs = s.executeQuery("SELECT CAST(" + expression + " AS VARCHAR) AS v")) {
+                    assertTrue(rs.next());
+                    assertEquals(value, rs.getString(1));
+                }
+            }
+            try (ResultSet rs = s.executeQuery("SELECT NULL::BIGNUM AS n, []::BIGNUM[] AS a")) {
+                assertTrue(rs.next());
+                assertEquals(Types.OTHER, rs.getMetaData().getColumnType(1));
+                assertEquals("BIGNUM", rs.getMetaData().getColumnTypeName(1));
+                assertEquals(Object.class.getName(), rs.getMetaData().getColumnClassName(1));
+                assertNull(rs.getObject(1));
+                assertTrue(rs.wasNull());
+                assertEquals(Types.OTHER, rs.getArray(2).getBaseType());
+                assertEquals("BIGNUM", rs.getArray(2).getBaseTypeName());
+                assertEquals(0, ((Object[]) rs.getArray(2).getArray()).length);
+            }
+            try (ResultSet rs = s.executeQuery("SELECT '123456789'::BIGNUM AS v WHERE false")) {
+                assertEquals(Types.OTHER, rs.getMetaData().getColumnType(1));
+                assertFalse(rs.next());
+            }
+        }
+    }
+
+    @Test
     void specialTemporalValuesFailExplicitlyAtScalarAndNestedBoundaries() throws Exception {
         try (Connection c = connect(); Statement s = c.createStatement()) {
             for (String type : new String[]{"DATE", "TIMESTAMP_S", "TIMESTAMP_MS", "TIMESTAMP", "TIMESTAMP_NS", "TIMESTAMPTZ", "TIME", "TIME_NS"}) {

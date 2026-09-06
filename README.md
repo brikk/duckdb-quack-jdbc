@@ -355,6 +355,11 @@ GizmoData roadmap.
   and unattempted suffix are absent. The submitted batch is cleared after
   success or a SQL execution failure. Counts do not imply commitment: manual
   transactions still require commit or rollback.
+- Non-null BIGNUM, TYPE, and AGGREGATE_STATE values are explicitly unsupported
+  on decode and APPEND, including nested values. Their physical VARCHAR storage
+  is binary, not text. BIGNUM reports `Types.OTHER`; nulls and empty results remain
+  usable. Use `CAST(value AS VARCHAR)` in SQL to retrieve BIGNUM as decimal text.
+  VARCHAR/CHAR/JSON text and BLOB/BIT/GEOMETRY raw-byte representations are unchanged.
 - The `APPEND_REQUEST` fast-path encodes scalar and nested
   (STRUCT / LIST / ARRAY / MAP) DataChunks, so `QuackConnection.session()
   .appendChunk(...)` can bulk-load nested data. Appends through a JDBC

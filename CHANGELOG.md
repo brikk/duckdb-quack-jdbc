@@ -78,6 +78,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and temporal sequences are range-checked; validity-masked nulls and finite
   signed-min values retain their meanings. TIMETZ's raw packed representation
   and Calendar semantics are unchanged.
+- **B31:** Non-null BIGNUM, TYPE, and AGGREGATE_STATE values now fail explicitly
+  on decode and APPEND rather than treating their binary storage as UTF-8.
+  BIGNUM metadata reports OTHER, not VARCHAR. Null/empty values, textual aliases,
+  and supported raw binary representations are preserved; cast BIGNUM to VARCHAR
+  in SQL when decimal text is needed.
 
 Review IDs and verification details are recorded in [CODE_REVIEW.md](CODE_REVIEW.md).
 Other findings remain open; the review records current resolution status.
