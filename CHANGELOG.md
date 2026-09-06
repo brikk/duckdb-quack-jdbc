@@ -8,6 +8,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **I2:** Snapshot publication now waits for the same CI run's successful tests
+  and integration-report checks, checks out that run's exact SHA, and publishes
+  only SNAPSHOT versions from main. Manual publication uses the CI workflow.
 - **I3:** CI requires version-verified integration fixtures and oracle presence,
   uses stock signed core extensions, rejects missing/skipped
   integration reports, and preserves fixture diagnostics on failure.

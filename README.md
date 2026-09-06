@@ -245,8 +245,13 @@ mvn --batch-mode --no-transfer-progress -Poracle -Dquack.it.required=true verify
 Required mode fails on missing CLI or oracle dependencies;
 CI also rejects missing or skipped integration reports. Fixture logs record
 actual server/extension identities and verify signed core loading. Optional local
-test runs retain auto-skipping when their fixture is unavailable. This does not
-change the independent snapshot publication workflow.
+test runs retain auto-skipping when their fixture is unavailable.
+
+Snapshots publish only after that CI run's verification succeeds, from the exact
+tested commit. To retry publication manually, run the **CI** workflow on `main`;
+it repeats verification before deploying. Pull requests, other branches, and
+non-SNAPSHOT project versions do not publish snapshots. Stable releases remain
+triggered by version-tag pushes.
 
 ## DBeaver
 
