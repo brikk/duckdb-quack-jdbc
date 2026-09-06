@@ -10,6 +10,9 @@ public sealed interface QuackMessage {
 
     MessageHeader header();
 
+    /** HTTP sideband metadata only; never serialized in the v1 binary message. */
+    enum ResultKind { QUERY, CHANGED_ROWS, NOTHING }
+
     record ConnectionRequest(MessageHeader header,
                              Optional<String> authString,
                              Optional<String> clientDuckdbVersion,
@@ -20,7 +23,13 @@ public sealed interface QuackMessage {
     record ConnectionResponse(MessageHeader header,
                               Optional<String> serverDuckdbVersion,
                               Optional<String> serverPlatform,
-                              Optional<Long> quackVersion) implements QuackMessage {}
+                              Optional<Long> quackVersion,
+                              Optional<Long> resultMetadataVersion) implements QuackMessage {
+        public ConnectionResponse(MessageHeader header, Optional<String> serverDuckdbVersion,
+                                  Optional<String> serverPlatform, Optional<Long> quackVersion) {
+            this(header, serverDuckdbVersion, serverPlatform, quackVersion, Optional.empty());
+        }
+    }
 
     record PrepareRequest(MessageHeader header, String sql) implements QuackMessage {}
 
@@ -29,7 +38,14 @@ public sealed interface QuackMessage {
                            List<String> resultNames,
                            boolean needsMoreFetch,
                            List<DataChunk> results,
-                           HugeIntParts resultUuid) implements QuackMessage {}
+                           HugeIntParts resultUuid,
+                           Optional<ResultKind> resultKind) implements QuackMessage {
+        public PrepareResponse(MessageHeader header, List<LogicalType> resultTypes,
+                               List<String> resultNames, boolean needsMoreFetch,
+                               List<DataChunk> results, HugeIntParts resultUuid) {
+            this(header, resultTypes, resultNames, needsMoreFetch, results, resultUuid, Optional.empty());
+        }
+    }
 
     record FetchRequest(MessageHeader header, HugeIntParts resultUuid) implements QuackMessage {}
 

@@ -287,7 +287,7 @@ class QuackStatementExecutionTest {
     }
 
     private static QuackConnection connect(ScriptedTransport transport) {
-        return new QuackConnection(QuackUri.parse("jdbc:quack://example.test"), uri -> transport);
+        return new QuackConnection(QuackUri.parse("jdbc:quack://example.test?resultMetadata=legacy"), uri -> transport);
     }
 
     private static QuackMessage.PrepareResponse response(boolean update, long value) {

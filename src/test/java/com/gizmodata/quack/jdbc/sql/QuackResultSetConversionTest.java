@@ -313,7 +313,7 @@ class QuackResultSetConversionTest {
         LogicalType type = LogicalType.of(id);
         DataChunk chunk = new DataChunk(1, List.of(type), List.of(
                 new DecodedVector.ObjectVec(type, new Object[]{value})));
-        QuackSession session = new QuackSession(QuackUri.parse("jdbc:quack://example.test"), request -> {
+        QuackSession session = new QuackSession(QuackUri.parse("jdbc:quack://example.test?resultMetadata=legacy"), request -> {
             throw new AssertionError("Unexpected I/O");
         });
         var response = new QuackMessage.PrepareResponse(MessageHeader.of(MessageType.PREPARE_RESPONSE),

@@ -32,6 +32,8 @@ public final class QuackSession implements AutoCloseable {
     private final AtomicLong queryIdSeq = new AtomicLong(1);
     private volatile String connectionId;
     private volatile Optional<String> serverDuckdbVersion = Optional.empty();
+    private final boolean requiresResultMetadata;
+    private boolean negotiatedResultMetadata;
     private volatile boolean closed;
 
     public QuackSession(QuackUri uri, QuackTransport transport) {
@@ -42,6 +44,7 @@ public final class QuackSession implements AutoCloseable {
         this.uri = Objects.requireNonNull(uri, "uri");
         this.transport = Objects.requireNonNull(transport, "transport");
         this.connection = connection;
+        this.requiresResultMetadata = uri.requiresResultMetadata();
     }
 
     public QuackSession(QuackUri uri, QuackHttpTransport transport) {
@@ -104,6 +107,25 @@ public final class QuackSession implements AutoCloseable {
         }
         this.connectionId = connResp.header().connectionId().orElseThrow(
                 () -> new QuackProtocolException("Server did not return a connection_id"));
+        try {
+            if (connResp.quackVersion().isPresent()
+                    && connResp.quackVersion().get() != QuackConstants.QUACK_VERSION) {
+                throw new QuackProtocolException("Unsupported Quack protocol version; expected version 1");
+            }
+            if (connResp.resultMetadataVersion().isPresent()
+                    && connResp.resultMetadataVersion().get() != 1L) {
+                throw new QuackProtocolException("Unsupported Quack result metadata capability version");
+            }
+            negotiatedResultMetadata = connResp.resultMetadataVersion().isPresent();
+            if (requiresResultMetadata && (!negotiatedResultMetadata || connResp.quackVersion().isEmpty())) {
+                throw new QuackProtocolException("resultMetadata=required needs a patched Quack server with "
+                        + "result metadata version 1 and Quack protocol version 1; "
+                        + "use resultMetadata=legacy explicitly for stock v1 servers (ambiguous result classification)");
+            }
+        } catch (RuntimeException e) {
+            close();
+            throw e;
+        }
         this.serverDuckdbVersion = connResp.serverDuckdbVersion();
     }
 
@@ -127,6 +149,11 @@ public final class QuackSession implements AutoCloseable {
             throw new QuackProtocolException(
                     "Expected PREPARE_RESPONSE, got " + response.getClass().getSimpleName());
         }
+        if ((requiresResultMetadata || negotiatedResultMetadata) && prep.resultKind().isEmpty()) {
+            throw new QuackProtocolException("Missing X-Quack-Result-Kind on PREPARE_RESPONSE; "
+                    + "result metadata cannot be dropped during a session");
+        }
+        if (prep.resultKind().isPresent()) negotiatedResultMetadata = true;
         return new Cursor(this, prep);
     }
 
@@ -212,6 +239,13 @@ public final class QuackSession implements AutoCloseable {
                     "Expected FETCH_RESPONSE, got " + fr.getClass().getSimpleName());
         }
         state.hasMore = fetchResp.batchIndex().isPresent();
+        if (!state.hasMore || fetchResp.results().stream().anyMatch(chunk -> chunk.rowCount() > 0)) {
+            state.emptyContinuations = 0;
+        } else if (++state.emptyContinuations > 1) {
+            // Stock v1 may send one empty continuation before its terminal empty batch.
+            state.hasMore = false;
+            throw new QuackProtocolException("Repeated FETCH continuation without row progress");
+        }
         return fetchResp.results();
     }
 
@@ -230,6 +264,7 @@ public final class QuackSession implements AutoCloseable {
         private final QuackSession session;
         private final List<String> columnNames;
         private final List<LogicalType> columnTypes;
+        private final Optional<QuackMessage.ResultKind> resultKind;
         private final HugeIntParts resultUuid;
         private final Deque<DataChunk> buffered;
         private final FetchState fetchState;
@@ -240,6 +275,7 @@ public final class QuackSession implements AutoCloseable {
             this.session = session;
             this.columnNames = prep.resultNames();
             this.columnTypes = prep.resultTypes();
+            this.resultKind = prep.resultKind();
             this.resultUuid = prep.resultUuid();
             this.buffered = new ArrayDeque<>(prep.results());
             this.fetchState = new FetchState(prep.needsMoreFetch());
@@ -254,6 +290,10 @@ public final class QuackSession implements AutoCloseable {
             return columnTypes;
         }
 
+        public Optional<QuackMessage.ResultKind> resultKind() {
+            return resultKind;
+        }
+
         /** Peek at the first buffered chunk without advancing the cursor. */
         public DataChunk peekFirstChunk() {
             return buffered.peek();
@@ -266,7 +306,7 @@ public final class QuackSession implements AutoCloseable {
          */
         public DataChunk nextChunk() {
             if (closed) return null;
-            if (buffered.isEmpty() && fetchState.hasMore) {
+            while (buffered.isEmpty() && fetchState.hasMore) {
                 List<DataChunk> next = session.fetchMoreChunks(resultUuid, fetchState);
                 buffered.addAll(next);
                 for (DataChunk c : next) materializedRowCount += c.rowCount();
@@ -309,6 +349,7 @@ public final class QuackSession implements AutoCloseable {
 
     private static final class FetchState {
         boolean hasMore;
+        int emptyContinuations;
 
         FetchState(boolean hasMore) {
             this.hasMore = hasMore;

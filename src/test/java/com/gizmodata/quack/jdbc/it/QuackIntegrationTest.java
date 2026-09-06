@@ -42,22 +42,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class QuackIntegrationTest {
 
     static boolean duckdbAvailable() {
-        String binary = System.getenv().getOrDefault("QUACK_IT_DUCKDB", "duckdb");
-        // An absolute path (or any path with a directory component, e.g. ./duckdb)
-        // is checked directly; only a bare command name is resolved against PATH.
-        java.nio.file.Path direct = java.nio.file.Path.of(binary);
-        if (direct.isAbsolute() || direct.getParent() != null) {
-            return java.nio.file.Files.isExecutable(direct);
-        }
-        String pathEnv = System.getenv("PATH");
-        if (pathEnv == null) return false;
-        for (String entry : pathEnv.split(java.io.File.pathSeparator)) {
-            java.nio.file.Path candidate = java.nio.file.Path.of(entry, binary);
-            if (java.nio.file.Files.isExecutable(candidate)) {
-                return true;
-            }
-        }
-        return false;
+        return QuackServerFixture.enabled(QuackServerFixture.required(),
+                System.getenv().getOrDefault("QUACK_IT_DUCKDB", "duckdb"), System.getenv("PATH"));
     }
 
     private QuackServerFixture server;

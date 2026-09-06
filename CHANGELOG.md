@@ -8,6 +8,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **B15:** Statement classification uses authoritative metadata from the included
+  pinned server patch. Required metadata is now the default; stock servers need
+  explicit legacy mode, which retains the old classification limitation. Binary
+  protocol v1 is unchanged. Query/update mismatches fail after execution, and
+  non-progressing FETCH continuations are bounded. See `server/README.md`.
 - **I1:** CI and its dependent release job now include the oracle parity profile.
 - **L4:** Driver constants, metadata, and handshake identity derive from Maven's
   version. Database version metadata uses the actual server handshake identity

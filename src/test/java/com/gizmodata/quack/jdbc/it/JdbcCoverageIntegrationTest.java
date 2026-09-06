@@ -145,7 +145,7 @@ public class JdbcCoverageIntegrationTest {
                 s.execute("ATTACH ':memory:' AS " + identifier);
                 s.execute("CREATE TABLE " + identifier + ".main.jdbc_it_url_target (v INTEGER)");
                 String path = URLEncoder.encode(catalog, StandardCharsets.UTF_8).replace("+", "%20");
-                String url = "jdbc:quack://127.0.0.1:" + server.port() + "/" + path + "?token=" + server.token();
+                String url = server.jdbcUrl().replace("?", "/" + path + "?");
                 try (Connection c = DriverManager.getConnection(url); Statement write = c.createStatement()) {
                     assertEquals(catalog, c.getCatalog());
                     c.setCatalog(catalog);
@@ -174,7 +174,7 @@ public class JdbcCoverageIntegrationTest {
         try (Connection c = connect(); Statement s = c.createStatement()) {
             s.execute("CREATE SCHEMA jdbc_it_schema_only");
             for (String name : new String[]{"jdbc_it_missing_catalog", "main", "jdbc_it_schema_only"}) {
-                String url = "jdbc:quack://127.0.0.1:" + server.port() + "/" + name + "?token=" + server.token();
+                String url = server.jdbcUrl().replace("?", "/" + name + "?");
                 assertThrows(SQLException.class, () -> {
                     try (Connection ignored = DriverManager.getConnection(url)) {
                         // A connection must not be returned with a different active catalog.

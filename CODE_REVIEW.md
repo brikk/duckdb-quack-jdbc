@@ -171,6 +171,10 @@ Location: `sql/QuackStatement.java:77-96,106-117`.
 
 `execute("SELECT 42::BIGINT AS Count")` reports an update count of 42 and discards the query result. CREATE TABLE instead reports a ResultSet and update count -1. executeUpdate accepts ordinary SELECT and reports zero. Use reliable statement/result-kind information rather than column names, distinguish no-result DDL, and reject query results in executeUpdate. Confirmed live.
 
+**Resolution (2026-09-06): resolved in required-metadata mode with the approved server change.** Stock v1 has no result-kind field, and upstream v3 does not fix this omission. The user approved a coordinated server/client change and requiring its capability by default. The pinned server patch exposes a versioned HTTP capability (`X-Quack-Result-Metadata: 1`) and authoritative `query`, `changed_rows`, or `nothing` metadata captured after authorization rewriting and before result destruction. Binary v1 bodies and native-client compatibility are unchanged. Invalid capability requests fail before SQL with HTTP 400 and connection close.
+
+Default JDBC connections fail clearly if the capability is absent. Explicit resultMetadata=legacy retains stock-v1 behavior and its known classification limitation; legacy is not claimed fixed. Required/negotiated connections never fall back when metadata is missing or malformed. executeUpdate/executeQuery enforce result kind after execution (not before side effects), changed-row payloads are validated, and non-progressing FETCH continuations are bounded. Server patch/build tooling and the exact contract are under server/ and tools/. See V19 for combined verification and remaining deployment qualifications.
+
 ### B16. Re-execution leaves previous results open and exposes stale state [P2]
 
 Location: `sql/QuackStatement.java:83-103`.

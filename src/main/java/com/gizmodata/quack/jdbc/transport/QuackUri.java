@@ -125,7 +125,9 @@ public record QuackUri(String host,
         boolean tls = parseBool(tlsKey, params.get(tlsKey));
         Optional<String> token = QuackTokenResolver.resolve(params);
 
-        return new QuackUri(host, port, database, tls, token, params);
+        QuackUri uri = new QuackUri(host, port, database, tls, token, params);
+        uri.requiresResultMetadata();
+        return uri;
     }
 
     public URI httpUri() {
@@ -142,6 +144,15 @@ public record QuackUri(String host,
 
     public Duration requestTimeout() {
         return parseDurationProperty("requestTimeout", QuackHttpTransport.DEFAULT_REQUEST_TIMEOUT);
+    }
+
+    /** Legacy explicitly accepts ambiguous alias-based result classification on stock v1 servers. */
+    public boolean requiresResultMetadata() {
+        return switch (properties.getOrDefault("resultMetadata", "required")) {
+            case "required" -> true;
+            case "legacy" -> false;
+            default -> throw new QuackException("Quack JDBC property resultMetadata must be required or legacy");
+        };
     }
 
     public DecodeLimits decodeLimits() {
@@ -186,7 +197,8 @@ public record QuackUri(String host,
             throw new QuackException("HTTP header value must not contain CR/LF");
         }
         switch (trimmed.toLowerCase(Locale.ROOT)) {
-            case "content-type", "accept", "content-length", "host" ->
+            case "content-type", "accept", "content-length", "host",
+                    "x-quack-result-metadata", "x-quack-result-kind" ->
                     throw new QuackException("HTTP header is reserved by the Quack protocol");
             default -> { }
         }

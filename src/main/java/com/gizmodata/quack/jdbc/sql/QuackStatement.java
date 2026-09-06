@@ -1,6 +1,7 @@
 package com.gizmodata.quack.jdbc.sql;
 
 import com.gizmodata.quack.jdbc.QuackException;
+import com.gizmodata.quack.jdbc.QuackProtocolException;
 import com.gizmodata.quack.jdbc.message.DataChunk;
 import com.gizmodata.quack.jdbc.type.LogicalTypeId;
 
@@ -66,18 +67,24 @@ public class QuackStatement extends SkeletalStatement {
         return connection;
     }
 
+    /** Result-kind checks happen after server execution, not as pre-execution SQL validation. */
     @Override
     public ResultSet executeQuery(String sql) throws SQLException {
         execute(sql);
         if (currentResultSet == null) {
-            throw new SQLException("Query did not produce a ResultSet: " + sql);
+            throw new SQLException("Executed statement did not produce a ResultSet");
         }
         return currentResultSet;
     }
 
+    /** A mismatch is reported after execution; this does not prevent server-side effects. */
     @Override
     public int executeUpdate(String sql) throws SQLException {
         execute(sql);
+        if (currentResultSet != null) {
+            resetExecutionState();
+            throw new SQLException("Executed statement produced a ResultSet, not an update count");
+        }
         return updateCount < 0 ? 0 : updateCount;
     }
 
@@ -86,24 +93,71 @@ public class QuackStatement extends SkeletalStatement {
         checkOpen();
         resetExecutionState();
         connection.beginTransactionIfNeeded();
+        QuackSession.Cursor cursor = null;
         try {
-            QuackSession.Cursor cursor = connection.session().cursor(sql);
+            cursor = connection.session().cursor(sql);
+            if (cursor.resultKind().isPresent()) {
+                switch (cursor.resultKind().get()) {
+                    case CHANGED_ROWS -> {
+                        updateCount = readChangedRows(cursor);
+                        return false;
+                    }
+                    case NOTHING -> {
+                        updateCount = 0;
+                        return false;
+                    }
+                    case QUERY -> {
+                        currentResultSet = new QuackResultSet(this, cursor);
+                        cursor = null; // Ownership passes to the ResultSet.
+                        return true;
+                    }
+                }
+            }
+            // Only explicit legacy sessions can reach the ambiguous v1 heuristic.
             DataChunk first = cursor.peekFirstChunk();
             if (looksLikeRowsAffected(cursor, first)) {
                 updateCount = extractRowsAffected(first);
-                cursor.close();
                 currentResultSet = null;
                 return false;
             }
             updateCount = -1;
             currentResultSet = new QuackResultSet(this, cursor);
+            cursor = null;
             return true;
         } catch (RuntimeException e) {
             if (e instanceof QuackException) {
                 throw new SQLException(e.getMessage(), e);
             }
             throw new SQLException("Failed to execute SQL: " + sql, e);
+        } finally {
+            if (cursor != null) cursor.close();
         }
+    }
+
+    private int readChangedRows(QuackSession.Cursor cursor) {
+        String invalid = "Invalid changed_rows result: expected exactly one nonnegative BIGINT count";
+        if (cursor.columnNames().size() != 1 || cursor.columnTypes().size() != 1
+                || cursor.columnTypes().get(0).id() != LogicalTypeId.BIGINT) {
+            throw new QuackProtocolException(invalid);
+        }
+        Long count = null;
+        DataChunk chunk;
+        while ((chunk = cursor.nextChunk()) != null) {
+            if (chunk.rowCount() < 0 || chunk.rowCount() > 1
+                    || chunk.columns().size() != 1 || chunk.types().size() != 1
+                    || chunk.types().get(0).id() != LogicalTypeId.BIGINT
+                    || chunk.columns().get(0).type().id() != LogicalTypeId.BIGINT
+                    || chunk.columns().get(0).size() != chunk.rowCount()) {
+                throw new QuackProtocolException(invalid);
+            }
+            if (chunk.rowCount() == 0) continue;
+            if (count != null) throw new QuackProtocolException(invalid);
+            Object value = chunk.columns().get(0).getObject(0);
+            if (!(value instanceof Long number) || number < 0) throw new QuackProtocolException(invalid);
+            count = number;
+        }
+        if (count == null) throw new QuackProtocolException(invalid);
+        return (int) Math.min(count, Integer.MAX_VALUE);
     }
 
     private boolean looksLikeRowsAffected(QuackSession.Cursor cursor, DataChunk first) {
