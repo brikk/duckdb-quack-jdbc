@@ -33,9 +33,9 @@ import java.time.format.DateTimeFormatterBuilder;
 import java.time.format.ResolverStyle;
 import java.time.temporal.ChronoField;
 import java.util.Calendar;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.UUID;
 
 public final class QuackResultSet extends SkeletalResultSet {
@@ -66,9 +66,9 @@ public final class QuackResultSet extends SkeletalResultSet {
         this.cursor = cursor;
         this.columnNames = cursor.columnNames();
         this.columnTypes = cursor.columnTypes();
-        this.columnIndexByName = new HashMap<>();
+        this.columnIndexByName = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         for (int i = 0; i < columnNames.size(); i++) {
-            columnIndexByName.putIfAbsent(columnNames.get(i).toUpperCase(), i);
+            columnIndexByName.putIfAbsent(columnNames.get(i), i);
         }
     }
 
@@ -135,7 +135,7 @@ public final class QuackResultSet extends SkeletalResultSet {
 
     @Override
     public int findColumn(String columnLabel) throws SQLException {
-        Integer idx = columnIndexByName.get(columnLabel.toUpperCase());
+        Integer idx = columnLabel == null ? null : columnIndexByName.get(columnLabel);
         if (idx == null) {
             throw new SQLException("Unknown column: " + columnLabel);
         }

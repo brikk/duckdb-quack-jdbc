@@ -189,6 +189,23 @@ public class JdbcCoverageIntegrationTest {
     // ---- Statement / PreparedStatement ----
 
     @Test
+    void columnLookupPreservesDistinctUnicodeLabelsAndFirstDuplicates() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement(); ResultSet rs = s.executeQuery(
+                "SELECT 11 AS \"stra\u00dfe\", 22 AS strasse, 33 AS ID, 7 AS \"MiXeD\", 8 AS mixed")) {
+            assertTrue(rs.next());
+            assertEquals(11, rs.getInt("stra\u00dfe"));
+            assertEquals(22, rs.getInt("strasse"));
+            assertEquals(2, rs.findColumn("STRASSE"));
+            assertEquals(33, rs.getInt("id"));
+            assertEquals(7, rs.getInt("mixed"));
+            assertEquals(8, rs.getInt(5));
+            assertEquals("stra\u00dfe", rs.getMetaData().getColumnLabel(1));
+            assertEquals("MiXeD", rs.getMetaData().getColumnLabel(4));
+            assertThrows(SQLException.class, () -> rs.findColumn(null));
+        }
+    }
+
+    @Test
     void boundedStreamsAndLongSlicesPreserveValuesOnStockQuack() throws Exception {
         try (Connection c = connect(); PreparedStatement p = c.prepareStatement("SELECT ? AS a, ? AS b, ? AS c")) {
             ByteArrayInputStream ascii = new ByteArrayInputStream("abcTAIL".getBytes(StandardCharsets.US_ASCII));

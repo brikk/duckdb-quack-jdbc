@@ -237,6 +237,8 @@ Location: `sql/QuackResultSet.java:55-56,114-115`.
 
 For labels `stra\u00dfe` and `strasse`, getInt("strasse") returns the first value because uppercasing expands the former into the latter. Under Turkish locale, ID cannot be found as id. Use locale-independent matching without conflating distinct labels through multi-character case expansion. Locale.ROOT alone only solves the Turkish case. Confirmed against native JDBC.
 
+**Resolution (2026-09-06): resolved.** A case-insensitive ordered map compares original labels without uppercasing or Unicode normalization, and putIfAbsent preserves the first matching column. Raw metadata labels remain unchanged. Unknown/null lookups throw SQLException. QuackColumnLookupTest passed 61 cases for simple Unicode casing, non-expansion, supplementary characters, duplicates, all supported label getters, and construction/lookup across locale changes; locale-changing tests are isolated and restore defaults. A stock-server regression confirms the reported distinct-label case and duplicate first-match behavior. Independent review found no B24 issues.
+
 ### B25. BLOB-to-string conversions are lossy or return array identities [P2]
 
 Location: `sql/QuackResultSet.java:140-144,312-315`.

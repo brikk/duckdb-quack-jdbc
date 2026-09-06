@@ -8,6 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **B24:** Column-label lookup is locale-independent and avoids multi-character
+  case expansion, preserving distinct labels and JDBC's first matching column.
 - **B26:** Array/Blob ranges and stream lengths are checked before integer
   narrowing. Exact-length reads no longer consume their tails or accept premature
   EOF; unsupported oversized stream lengths fail before reading caller input.
