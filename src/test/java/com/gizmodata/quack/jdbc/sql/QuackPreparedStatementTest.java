@@ -154,7 +154,7 @@ class QuackPreparedStatementTest {
     }
 
     private static QuackConnection recordingConnection(List<String> sent) {
-        return new QuackConnection(QuackUri.parse("jdbc:quack://example.test?resultMetadata=legacy"), uri -> request -> {
+        return new QuackConnection(QuackUri.parse("jdbc:quack://example.test"), uri -> request -> {
             if (request instanceof QuackMessage.ConnectionRequest) {
                 return new QuackMessage.ConnectionResponse(
                         MessageHeader.of(MessageType.CONNECTION_RESPONSE).withConnectionId("bindings"),
@@ -205,7 +205,7 @@ class QuackPreparedStatementTest {
     @Test
     void executionBatchAndMetadataUseTheSameMarkerPositions() throws Exception {
         List<String> sent = new ArrayList<>();
-        try (var c = recordingConnection(sent); var statement = c.prepareStatement("UPDATE t SET a = -? /* ? ' */")) {
+        try (var c = recordingConnection(sent); var statement = c.prepareStatement("SELECT -? /* ? ' */")) {
             statement.setInt(1, -1);
             statement.execute();
             statement.addBatch();
@@ -216,9 +216,9 @@ class QuackPreparedStatementTest {
             statement.getMetaData();
         }
         assertEquals(List.of(
-                "UPDATE t SET a = -/**/(-1)/**/ /* ? ' */",
-                "UPDATE t SET a = -/**/(-1)/**/ /* ? ' */",
-                "UPDATE t SET a = -/**/(-2)/**/ /* ? ' */",
-                "SELECT * FROM (UPDATE t SET a = -/**/NULL/**/ /* ? ' */) LIMIT 0"), sent);
+                "SELECT -/**/(-1)/**/ /* ? ' */",
+                "SELECT -/**/(-1)/**/ /* ? ' */",
+                "SELECT -/**/(-2)/**/ /* ? ' */",
+                "SELECT * FROM (SELECT -/**/NULL/**/ /* ? ' */) LIMIT 0"), sent);
     }
 }

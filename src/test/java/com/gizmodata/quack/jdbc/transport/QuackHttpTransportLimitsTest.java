@@ -287,8 +287,6 @@ class QuackHttpTransportLimitsTest {
     @ValueSource(ints = {3, 4})
     void existingInjectableConstructorsUseDefaultLimits(int arguments) throws Exception {
         assertNotNull(QuackHttpTransport.class.getConstructor(URI.class));
-        assertNotNull(QuackHttpTransport.class.getConstructor(URI.class, HttpClient.class, Duration.class,
-                Map.class, DecodeLimits.class, boolean.class));
         StubClient client = new StubClient(new byte[0]);
         client.headers = Map.of("Content-Length",
                 List.of(Long.toString((long) DecodeLimits.DEFAULT.maxResponseBytes() + 1)));

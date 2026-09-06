@@ -154,7 +154,7 @@ class QuackConnectionTransactionTest {
     @Test
     void standaloneSessionDoesNotAddTransactionCommands() {
         ScriptedTransport transport = new ScriptedTransport();
-        try (QuackSession session = QuackSession.connect(QuackUri.parse("jdbc:quack://example.test?resultMetadata=legacy"), transport)) {
+        try (QuackSession session = QuackSession.connect(QuackUri.parse("jdbc:quack://example.test"), transport)) {
             session.appendChunk("main", "t1", chunk());
             session.cursor("BEGIN TRANSACTION").close();
             session.appendChunk("main", "t1", chunk());
@@ -170,7 +170,7 @@ class QuackConnectionTransactionTest {
     }
 
     private static QuackConnection connect(ScriptedTransport transport) {
-        return new QuackConnection(QuackUri.parse("jdbc:quack://example.test:9494?resultMetadata=legacy"),
+        return new QuackConnection(QuackUri.parse("jdbc:quack://example.test:9494"),
                 uri -> transport);
     }
 

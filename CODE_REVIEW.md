@@ -2,7 +2,7 @@
 
 Reviewed 2026-09-05 at `/home/jayson/DEV/brikk/fork-quack-jdbc`, version `0.7.0-SNAPSHOT`.
 
-This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Implementation passes resolve B1-B12, B15 (required-metadata mode), B16, B18, B19, B22, B29-B32, B39, B40, B41, L4, I1, and I3; resolution notes and V5-V19 record the scope and verification. Earlier fixes were committed as af771d2, followed by B8 as 5f366ac, B11 as 3104d54, B7 as 974f8d3, B12/B32 as afa7d03, B39 as 983687d, B40 as 68c7bfb, B19 as 7d20147, B18 as 592a4ac, B29 as a4633bc, B30 as 18bd892, and B31 as a7d38cd. B41 shipped as e265b0e in snapshot build 11. The final pass deliberately requires an updated metadata-capable server by default; legacy mode retains B15's limitation. Existing changes to `CLAUDE.md` and `DUCKDB_COMPATIBILITY.md` were preserved.
+This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Implementation passes resolve B1-B12, B16, B18, B19, B22, B29-B32, B39, B40, B41, L4, I1, and I3; resolution notes and V5-V20 record the scope and verification. B15 is reclassified as a stock-protocol limitation: adding authoritative result metadata is upstream feature work, not an existing server feature or a driver-release prerequisite. The custom server experiment was withdrawn before publication. Stock signed Quack remains supported without special connection options. Earlier commit history and verification records remain available; unrelated CLAUDE.md and DUCKDB_COMPATIBILITY.md changes were preserved.
 
 All source references below are relative to the repository root. `sql/`, `message/`, `codec/`, `type/`, and `transport/` abbreviate directories under `src/main/java/com/gizmodata/quack/jdbc/`. Original finding line numbers refer to the reviewed baseline; subsequent edits may shift them. Keep the original evidence alongside resolution notes.
 
@@ -17,7 +17,7 @@ Use these IDs in requests, changes, tests, and follow-up discussions, for exampl
 | C | C1-C4 | Native-parity observations requiring a compatibility decision before changes |
 | I | I1-I9 | Build, testing, and engineering improvements |
 | S | S1-S8 | Strengths to preserve, not implementation tasks |
-| V | V1-V19 | Verification evidence and limitations, not implementation tasks |
+| V | V1-V20 | Verification evidence and limitations, not implementation tasks |
 
 IDs are permanent and independent of severity, priority rank, and document order. B1-B40 match the original full report's numbered findings, not the shorter chat summary's numbering. Never renumber or reuse an ID; record resolution under the existing item and append new IDs for new findings. If an item needs separate work units, retain its parent ID and introduce suffixes such as B4a and B4b.
 
@@ -165,15 +165,13 @@ Location: `transport/QuackHttpTransport.java:95-110`.
 
 On the current JDK 21.0.2, a local server sends headers and one byte promptly, then delays the rest of its response. With requestTimeout=500 ms, send successfully completes after about 1576 ms. HttpRequest.timeout alone does not enforce the whole operation's deadline in this scenario. Apply a deadline that covers body consumption and cancellation/cleanup of the underlying request. This is distinct from the ignored JDBC deadline methods. Exact behavior on JDK 17 was not separately measured.
 
-### B15. Statement result classification depends on a user-controlled alias [P2]
+### B15. Result-kind metadata is unavailable in stock protocol [Protocol Limitation]
 
 Location: `sql/QuackStatement.java:77-96,106-117`.
 
 `execute("SELECT 42::BIGINT AS Count")` reports an update count of 42 and discards the query result. CREATE TABLE instead reports a ResultSet and update count -1. executeUpdate accepts ordinary SELECT and reports zero. Use reliable statement/result-kind information rather than column names, distinguish no-result DDL, and reject query results in executeUpdate. Confirmed live.
 
-**Resolution (2026-09-06): resolved in required-metadata mode with the approved server change.** Stock v1 has no result-kind field, and upstream v3 does not fix this omission. The user approved a coordinated server/client change and requiring its capability by default. The pinned server patch exposes a versioned HTTP capability (`X-Quack-Result-Metadata: 1`) and authoritative `query`, `changed_rows`, or `nothing` metadata captured after authorization rewriting and before result destruction. Binary v1 bodies and native-client compatibility are unchanged. Invalid capability requests fail before SQL with HTTP 400 and connection close.
-
-Default JDBC connections fail clearly if the capability is absent. Explicit resultMetadata=legacy retains stock-v1 behavior and its known classification limitation; legacy is not claimed fixed. Required/negotiated connections never fall back when metadata is missing or malformed. executeUpdate/executeQuery enforce result kind after execution (not before side effects), changed-row payloads are validated, and non-progressing FETCH continuations are bounded. Server patch/build tooling and the exact contract are under server/ and tools/. See V19 for combined verification and remaining deployment qualifications.
+**Reclassification (2026-09-06): documented protocol limitation, not a requirement to invent a server feature.** The original recommendation assumed authoritative result-kind information could be obtained. Stock Quack v1 does not carry it. Adding it would be a separate upstream feature; requiring users to install an unofficial extension is not an acceptable driver fix or release prerequisite. The custom implementation was removed before publication. Existing heuristic behavior and its limitations remain; B15 is not claimed fixed. No private capability or special compatibility mode is required. See V20.
 
 ### B16. Re-execution leaves previous results open and exposes stale state [P2]
 
@@ -181,7 +179,7 @@ Location: `sql/QuackStatement.java:83-103`.
 
 Executing two queries on a statement leaves the old ResultSet open and readable. Failed re-execution leaves getResultSet pointing to the previous query; a successful update can discard the reference without closing it. Close/reset previous state before any new execution, including before transaction initialization can fail. Confirmed live.
 
-**Resolution (2026-09-06): resolved.** Shared execution-state reset closes the previous ResultSet and clears the update count before query execution, lazy BEGIN, prepared interpolation, or batch execution. Parameter setters and addBatch do not close active results. Targeted QuackStatementExecutionTest verification passed 18 cases, including query/update transitions, failed BEGIN, missing bindings, rendering errors, empty batches, and close/getMoreResults behavior. Independent review found no scoped B16 issues. B15 result classification remains separate protocol work.
+**Resolution (2026-09-06): resolved.** Shared execution-state reset closes the previous ResultSet and clears the update count before query execution, lazy BEGIN, prepared interpolation, or batch execution. Parameter setters and addBatch do not close active results. Targeted QuackStatementExecutionTest verification passed 18 cases, including query/update transitions, failed BEGIN, missing bindings, rendering errors, empty batches, and close/getMoreResults behavior. Independent review found no scoped B16 issues. B15 remains a documented stock-protocol limitation.
 
 ### B17. Connection close and commit do not manage dependent resources [P2]
 
@@ -380,7 +378,7 @@ Explicitly unsupported FSST, native bind parameters, array ResultSets, updatable
   **Resolution (2026-09-06): resolved.** The test job now runs Maven with -Poracle, so tag publication's existing dependency on that job includes native oracle checks. Required integration execution and report auditing are separately tracked under I3.
 - **I2. Gate snapshot publication on successful verification.** `.github/workflows/publish-snapshot.yml:3-6,25-29` is a separate push-triggered workflow using -DskipTests, independent of CI success. A failing main revision can still be deployed as a snapshot.
 - **I3. Require integration execution in CI.** Local auto-skipping is useful, but CI should fail if the fixture is unavailable and assert/log the CLI and loaded extension versions. Keep released-server checks separate from prerelease compatibility runs.
-  **Resolution (2026-09-06): resolved.** CI builds the pinned metadata-capable extension, enables quack.it.required, and audits reports for every discovered integration class with no integration skips. Missing CLI/artifact/oracle and wrong runtime/extension/signature policies fail rather than silently skip. Fixtures isolate extension installs and verify the actual CLI/server identities, httpfs provider, and metadata capability. The patched test artifact is explicitly unsigned; stock compatibility tests separately verify signed core loading. Fixture logs accompany failed CI reports. I2's independent snapshot publication remains unchanged.
+  **Resolution (2026-09-06): resolved with stock-server verification.** CI enables quack.it.required and audits every discovered integration-class report with no integration skips. Missing CLI/oracle and incorrect runtime, extension, or signature policies fail rather than silently skip. Fixtures install only signed core httpfs and quack into isolated directories and verify their actual loaded identities. CI builds no custom native extension and needs no private artifact. Fixture logs accompany failed reports. I2's independent snapshot publication remains unchanged.
 - **I4. Expand oracle checks beyond type codes/names.** `OracleParityIntegrationTest.java:82-86` compares only these two properties; add actual values, wrapper class compatibility, null handling, exact numeric boundaries, unsigned values, temporal zones, tuples, and typed conversions.
 - **I5. Add JDBC state-transition and failure-path tests.** Cover close propagation, re-execution, commit holdability, partial batches, incomplete parameters, controls under blocked I/O, and FETCH failure after an initial page. Several current tests verify only that a method does not throw.
 - **I6. Add independent wire fixtures and bounded malformed-input tests.** Encoder/decoder self-round-trips cannot reveal shared mistakes or differences from server null sentinels. Add dedicated logical-type codec tests, default-omitted fields, unknown metadata, vector shapes, LEB overflow, nesting limits, and geometry wire fixtures.
@@ -612,24 +610,22 @@ Tested candidate JAR SHA-256: `44e51cd37db67bb42fb34ed4f4149bf819c895b157b595de3
 
 This does not requalify published build 10 or rerun the full connector suites. The separate T01-T08 connector wrong-row findings remain outside this correction. Actual HTTPS, live Doris FE/BE, soak testing, and remaining JDBC findings are not declared resolved. A replacement published artifact still needs identity-verified downstream revalidation before a stable-release decision.
 
-### V19. Final release-focused pass
+### V19. Withdrawn server-feature experiment
 
-User-approved scope: B15, B16, B22, L4, I1, and I3. Investigation proved pinned stock Quack v1 (and current upstream v3) lack authoritative result-kind metadata. The user explicitly approved the server/protocol change and requiring the capability by default, with explicit legacy opt-in. B16, B22, L4, and I1 were committed independently; B15 includes the server patch, reproducible build tooling, transport/client support, and server-profile fixture infrastructure. I3 activates the required CI build/report gate.
+The attempted B15 implementation expanded into a new, unofficial server capability. That was feature development, not a fix using functionality already present in supported servers. The explanation did not adequately disclose the trust and installation burden. The user rejected the approach, and it was removed before any push or publication. The experiment's test counts are not current release evidence. Independent B16/B22/L4/I1 fixes and stock-only I3 enforcement are retained; V20 supersedes this pass for verification.
 
-Independent reviews found and prompted fixes for non-progressing FETCH continuations, missing committed server request-negotiation tests, and an inaccessible constructor used in documentation. Invalid server capability requests now also close the HTTP connection without processing their unread body. Final source and tests preserve binary v1 framing; no unallocated protocol version ID was introduced.
+### V20. Stock-server restoration
 
-The exact cold builder (without source/archive reuse) completed in 291 seconds on local Linux x86-64, building all 297 Ninja steps. Official DuckDB 1.5.5 CLI loading, raw HTTP capability tests, rewritten-SQL classification, legacy native-client decoding, streaming, 27 rejected-request probes, and reused-client reconnects passed. Final cold extension SHA-256: `74651053d27f0ee26be16a367565fb4241fefa664262174381bdac0bd5d0abe5`. Source pins and build/deployment instructions are in server/README.md. This is not a signed or cross-platform server release.
+The custom server patch, native build tooling, capability headers, resultMetadata connection option, mandatory server-capability handshake, related response annotations, and custom-server tests were removed. Production transport/session behavior is back to stock v1. B16 re-execution cleanup, B22 FETCH error handling, L4 generated/runtime identity, and I1 oracle CI remain. I3 now uses only ordinary signed core httpfs/quack installations; eight fixture tests cover availability, executable resolution, required-oracle checks, and actual runtime/extension/signature/path validation.
 
-Combined verification on actual Java 17.0.2 and Java 21.0.2:
+Verification on Java 17.0.2 and Java 21.0.2, without any custom artifact or compatibility option:
 
 ```bash
-QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb QUACK_IT_RESULT_METADATA_EXTENSION=/tmp/opencode/quack-b15-cold/build/extension/quack/quack.duckdb_extension JAVA_HOME=/home/jayson/.local/share/mise/installs/java/17.0.2 mvn --batch-mode --no-transfer-progress -q -Poracle -Dquack.it.required=true clean verify
-QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb QUACK_IT_RESULT_METADATA_EXTENSION=/tmp/opencode/quack-b15-cold/build/extension/quack/quack.duckdb_extension mvn --batch-mode --no-transfer-progress -q -Poracle -Dquack.it.required=true clean verify
+QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb JAVA_HOME=/home/jayson/.local/share/mise/installs/java/17.0.2 mvn --batch-mode --no-transfer-progress -q -Poracle -Dquack.it.required=true clean verify
+QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn --batch-mode --no-transfer-progress -q -Poracle -Dquack.it.required=true clean verify
 ```
 
-Both builds passed **437 tests, zero failures/errors, and two existing networking-environment skips**. No integration suite skipped. The exact CI report gate was executed locally and accepted **14/14 integration classes, 41 total reports**. Required-mode absence/policy checks have seven focused fixture tests; oracle identity tests and full parity checks ran. Cold-build, shell, and gate checks passed locally; the new GitHub Actions workflow has not yet run on a pushed revision.
-
-No push, stable tag, or publication was requested for this pass. The new default is intentionally not a stock-server drop-in, and previous build-11 downstream qualification does not certify this new required-metadata path. Server deployment/signing and a paired server/client downstream run remain release steps. Other review findings, including B17 and I2, remain open; unrelated CLAUDE.md and DUCKDB_COMPATIBILITY.md changes were preserved.
+Both builds passed **386 tests, zero failures/errors, and two existing networking-environment skips**. All integration suites ran against stock DuckDB 1.5.5 / signed core Quack c154811 with unsigned loading and unsafe crypto disabled. The CI report gate accepted **13/13 integration classes, 38 reports**. Independent rollback review found no remaining custom capability code or regression in the preserved fixes. No custom feature was pushed or published, and it is no longer a release prerequisite. B15 remains a documented protocol limitation; supporting a new server capability would require a separate, clearly described feature proposal.
 
 ## Top Five Priorities
 
@@ -643,4 +639,4 @@ This is the original approved implementation order, now completed as recorded un
 | 4 | B10 | Select and validate the URL catalog | Low-Medium | Unqualified writes can reach the wrong database. Initialize the server catalog before caching it, handle failed initialization cleanup, and test attached, nonexistent, and quoted catalog names. |
 | 5 | B4 | Preserve exact numeric conversions | Low-Medium | Affects common BIGINT/DECIMAL reads and decimal writes. Remove floating-point and long intermediates for exact values; test large positive/negative integers, scales, and typed BigInteger retrieval. |
 
-These ranks do not change any finding's ID. B41/V18 corrected the subsequent default-budget regression and shipped in build 11; the user reported passing artifact-verified downstream retesting for that build. V19 completes the requested B15/B16/B22/L4/I1/I3 pass, but its new required-metadata path needs paired server/client deployment and downstream qualification. B17 resource ownership, B13/B14 deadlines, I2 snapshot gating, and other unresolved findings remain open. C items still require compatibility decisions; no stable-release approval is implied by the completed scope.
+These ranks do not change any finding's ID. B41/V18 corrected the default-budget regression and shipped in build 11; the user reported passing artifact-verified downstream retesting. V20 verifies the retained B16/B22/L4/I1/I3 improvements against stock signed Quack after withdrawing the custom server feature. B15 is a protocol limitation, not a custom-plugin release prerequisite. Other findings remain tracked separately; no new feature should be presented as an existing capability or silently added to a defect-fix release scope.

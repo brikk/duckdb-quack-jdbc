@@ -146,7 +146,7 @@ class QuackDriverCustomTransportTest {
         String[] defaults = {Integer.toString(DecodeLimits.DEFAULT.maxResponseBytes()),
                 Long.toString(DecodeLimits.DEFAULT.maxDecodedBytes()),
                 Integer.toString(DecodeLimits.DEFAULT.maxNestingDepth())};
-        assertEquals(11, descriptors.length);
+        assertEquals(10, descriptors.length);
         for (int i = 0; i < names.length; i++) {
             DriverPropertyInfo descriptor = descriptors[7 + i];
             assertEquals(names[i], descriptor.name);
@@ -157,7 +157,7 @@ class QuackDriverCustomTransportTest {
         assertTrue(descriptors[7].description.contains("bytes"));
         assertTrue(descriptors[8].description.contains("bytes"));
         assertTrue(descriptors[9].description.contains("1..128"));
-        assertEquals(11, new QuackDriver().getPropertyInfo(null, null).length);
+        assertEquals(10, new QuackDriver().getPropertyInfo(null, null).length);
     }
 
     @Test
@@ -226,7 +226,7 @@ class QuackDriverCustomTransportTest {
                                 .withClientQueryId(clientQueryId),
                         Optional.empty(),
                         Optional.empty(),
-                        Optional.of(1L), Optional.of(1L));
+                        Optional.empty());
             }
             if (request instanceof QuackMessage.DisconnectMessage) {
                 long clientQueryId = request.header().clientQueryId().orElse(0L);
@@ -239,8 +239,7 @@ class QuackDriverCustomTransportTest {
                 if (failCatalog) throw new QuackException("unknown catalog");
                 return new QuackMessage.PrepareResponse(
                         MessageHeader.of(MessageType.PREPARE_RESPONSE).withConnectionId(connectionId),
-                        List.of(), List.of(), false, List.of(), new HugeIntParts(0, 0),
-                        Optional.of(QuackMessage.ResultKind.NOTHING));
+                        List.of(), List.of(), false, List.of(), new HugeIntParts(0, 0));
             }
             throw new AssertionError("unexpected request: " + request.getClass().getSimpleName());
         }

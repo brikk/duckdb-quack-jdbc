@@ -258,7 +258,7 @@ class QuackResultSetFetchTest {
 
     private static QuackSession.Cursor cursor(ScriptedTransport transport, LogicalType type,
                                                boolean more, DataChunk... initialChunks) {
-        var session = new QuackSession(QuackUri.parse("jdbc:quack://example.test?resultMetadata=legacy"), transport);
+        var session = new QuackSession(QuackUri.parse("jdbc:quack://example.test"), transport);
         var response = new QuackMessage.PrepareResponse(MessageHeader.of(MessageType.PREPARE_RESPONSE),
                 List.of(type), List.of("value"), more, List.of(initialChunks), RESULT_UUID);
         return new QuackSession.Cursor(session, response);

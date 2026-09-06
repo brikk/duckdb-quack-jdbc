@@ -34,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * End-to-end tests against a live DuckDB Quack server. Skipped when the
- * {@code duckdb} CLI is not on PATH so unit-only test runs still work.
+ * {@code duckdb} CLI is unavailable, unless {@code -Dquack.it.required=true}.
  */
 @Tag("integration")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)

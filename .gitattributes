@@ -1,2 +1,0 @@
-# Unified diffs preserve upstream context whitespace; check the patched source separately.
-server/*.patch whitespace=-blank-at-eol,-space-before-tab

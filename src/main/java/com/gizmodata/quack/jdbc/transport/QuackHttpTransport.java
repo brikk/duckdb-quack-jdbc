@@ -1,13 +1,10 @@
 package com.gizmodata.quack.jdbc.transport;
 
 import com.gizmodata.quack.jdbc.QuackException;
-import com.gizmodata.quack.jdbc.QuackProtocolException;
 import com.gizmodata.quack.jdbc.QuackServerException;
 import com.gizmodata.quack.jdbc.codec.DecodeLimits;
 import com.gizmodata.quack.jdbc.codec.QuackConstants;
 import com.gizmodata.quack.jdbc.message.MessageCodec;
-import com.gizmodata.quack.jdbc.message.MessageHeader;
-import com.gizmodata.quack.jdbc.message.MessageType;
 import com.gizmodata.quack.jdbc.message.QuackMessage;
 
 import java.io.IOException;
@@ -20,7 +17,6 @@ import java.net.URISyntaxException;
 import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.net.http.HttpConnectTimeoutException;
-import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpRequest.BodyPublishers;
 import java.net.http.HttpResponse;
@@ -52,15 +48,12 @@ public final class QuackHttpTransport implements QuackTransport {
 
     public static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(10);
     public static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(60);
-    private static final String METADATA_HEADER = "X-Quack-Result-Metadata";
-    private static final String KIND_HEADER = "X-Quack-Result-Kind";
 
     private final URI endpoint;
     private final HttpClient httpClient;
     private final Duration requestTimeout;
     private final Map<String, String> extraHeaders;
     private final DecodeLimits decodeLimits;
-    private final boolean requiresResultMetadata;
 
     public QuackHttpTransport(URI endpoint) {
         this(endpoint, HttpClient.newBuilder()
@@ -80,18 +73,11 @@ public final class QuackHttpTransport implements QuackTransport {
 
     public QuackHttpTransport(URI endpoint, HttpClient httpClient, Duration requestTimeout,
                               Map<String, String> extraHeaders, DecodeLimits decodeLimits) {
-        this(endpoint, httpClient, requestTimeout, extraHeaders, decodeLimits, true);
-    }
-
-    public QuackHttpTransport(URI endpoint, HttpClient httpClient, Duration requestTimeout,
-                               Map<String, String> extraHeaders, DecodeLimits decodeLimits,
-                               boolean requiresResultMetadata) {
         this.endpoint = endpoint;
         this.httpClient = httpClient;
         this.requestTimeout = requestTimeout;
         this.extraHeaders = Map.copyOf(extraHeaders);
         this.decodeLimits = Objects.requireNonNull(decodeLimits, "decodeLimits");
-        this.requiresResultMetadata = requiresResultMetadata;
     }
 
     public static QuackHttpTransport from(QuackUri uri) {
@@ -99,7 +85,7 @@ public final class QuackHttpTransport implements QuackTransport {
                 .connectTimeout(uri.connectTimeout())
                 .build();
         return new QuackHttpTransport(uri.httpUri(), client, uri.requestTimeout(),
-                uri.extraHttpHeaders(), uri.decodeLimits(), uri.requiresResultMetadata());
+                uri.extraHttpHeaders(), uri.decodeLimits());
     }
 
     Duration requestTimeout() {
@@ -122,8 +108,6 @@ public final class QuackHttpTransport implements QuackTransport {
             // Extra headers first, protocol headers second: Content-Type
             // and Accept must win (QuackUri validation also rejects them).
             for (Map.Entry<String, String> header : extraHeaders.entrySet()) {
-                if (METADATA_HEADER.equalsIgnoreCase(header.getKey())
-                        || KIND_HEADER.equalsIgnoreCase(header.getKey())) continue;
                 try {
                     builder.header(header.getKey(), header.getValue());
                 } catch (IllegalArgumentException e) {
@@ -131,10 +115,9 @@ public final class QuackHttpTransport implements QuackTransport {
                     throw new QuackException("Invalid or restricted HTTP header in extra headers");
                 }
             }
-            if (requiresResultMetadata) builder.setHeader(METADATA_HEADER, "1");
             HttpRequest httpRequest = builder
-                    .setHeader("Content-Type", QuackConstants.DUCKDB_MIME_TYPE)
-                    .setHeader("Accept", QuackConstants.DUCKDB_MIME_TYPE)
+                    .header("Content-Type", QuackConstants.DUCKDB_MIME_TYPE)
+                    .header("Accept", QuackConstants.DUCKDB_MIME_TYPE)
                     .POST(BodyPublishers.ofByteArray(body))
                     .build();
 
@@ -170,23 +153,6 @@ public final class QuackHttpTransport implements QuackTransport {
                             + decodeLimits.maxResponseBytes() + " bytes");
                 }
                 QuackMessage decoded = MessageCodec.decode(readResponseBody(responseBody), decodeLimits);
-                try {
-                    decoded = annotateMetadata(decoded, response.headers());
-                } catch (QuackProtocolException e) {
-                    // The session cannot see a connection rejected during sideband parsing.
-                    if (request instanceof QuackMessage.ConnectionRequest
-                            && decoded instanceof QuackMessage.ConnectionResponse connection
-                            && connection.header().connectionId().isPresent()) {
-                        try {
-                            send(new QuackMessage.DisconnectMessage(MessageHeader.of(MessageType.DISCONNECT_MESSAGE)
-                                    .withConnectionId(connection.header().connectionId().get())
-                                    .withClientQueryId(request.header().clientQueryId().orElse(0L) + 1)));
-                        } catch (RuntimeException ignored) {
-                            // Best-effort cleanup must not hide the original protocol rejection.
-                        }
-                    }
-                    throw e;
-                }
                 if (decoded instanceof QuackMessage.ErrorResponse err) {
                     throw new QuackServerException(err.message());
                 }
@@ -197,30 +163,6 @@ public final class QuackHttpTransport implements QuackTransport {
         }
 
         throw new QuackException(buildExhaustedMessage(attempts, lastFailure), lastFailure);
-    }
-
-    private static QuackMessage annotateMetadata(QuackMessage decoded, HttpHeaders headers) {
-        var versions = headers.allValues(METADATA_HEADER);
-        var kinds = headers.allValues(KIND_HEADER);
-        if (versions.isEmpty() && kinds.isEmpty()) return decoded;
-        if (versions.size() != 1 || !"1".equals(versions.get(0))) {
-            throw new QuackProtocolException("Invalid or unsupported X-Quack-Result-Metadata response header");
-        }
-        if (decoded instanceof QuackMessage.ConnectionResponse connection && kinds.isEmpty()) {
-            return new QuackMessage.ConnectionResponse(connection.header(), connection.serverDuckdbVersion(),
-                    connection.serverPlatform(), connection.quackVersion(), Optional.of(1L));
-        }
-        if (decoded instanceof QuackMessage.PrepareResponse prepare && kinds.size() == 1) {
-            QuackMessage.ResultKind kind = switch (kinds.get(0)) {
-                case "query" -> QuackMessage.ResultKind.QUERY;
-                case "changed_rows" -> QuackMessage.ResultKind.CHANGED_ROWS;
-                case "nothing" -> QuackMessage.ResultKind.NOTHING;
-                default -> throw new QuackProtocolException("Invalid or unsupported X-Quack-Result-Kind response header");
-            };
-            return new QuackMessage.PrepareResponse(prepare.header(), prepare.resultTypes(), prepare.resultNames(),
-                    prepare.needsMoreFetch(), prepare.results(), prepare.resultUuid(), Optional.of(kind));
-        }
-        throw new QuackProtocolException("Missing, duplicate or inconsistent Quack result metadata response headers");
     }
 
     private byte[] readResponseBody(InputStream body) throws IOException {

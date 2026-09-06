@@ -178,7 +178,7 @@ class DriverVersionTest {
 
     private static QuackConnection connect(VersionTransport transport) throws SQLException {
         return assertInstanceOf(QuackConnection.class, new QuackDriver().connect(
-                "jdbc:quack://example.test:9494?resultMetadata=legacy", new Properties(), uri -> transport));
+                "jdbc:quack://example.test:9494", new Properties(), uri -> transport));
     }
 
     private static final class VersionTransport implements QuackTransport {

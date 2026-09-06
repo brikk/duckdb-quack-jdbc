@@ -12,43 +12,28 @@ familiar `jdbc:quack://` URL.
 [![GitHub Repo](https://img.shields.io/badge/github-brikk%2Fduckdb--quack--jdbc-181717?logo=github)](https://github.com/brikk/duckdb-quack-jdbc)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **Status:** Experimental / alpha. The current development driver requires
-> authoritative result metadata by default. Stock Quack v1 does not provide
-> it: use the [pinned server patch](server/README.md), or explicitly select
-> legacy mode with its documented classification limitation. Verification
-> uses DuckDB 1.5.5 and native `duckdb_jdbc` 1.5.5.0. The binary protocol stays
-> v1; this is not a migration to upstream Quack v3.
+> **Status:** Experimental / alpha. This driver uses stock Quack protocol v1,
+> tested against DuckDB 1.5.5 and its signed core Quack extension, with native
+> `duckdb_jdbc` 1.5.5.0 as a behavioral oracle. No custom server extension or
+> private protocol capability is required.
 
 ## Quickstart
 
-### 1. Start a metadata-capable Quack server
-
-Build the pinned server patch as described in [server/README.md](server/README.md):
-
-```bash
-tools/build-quack-test-extension.sh /tmp/quack-result-metadata
-duckdb -unsigned
-```
+### 1. Start a Quack server (DuckDB v1.5.3+)
 
 ```sql
--- Local development only, with DuckDB 1.5.5 and the freshly built artifact.
-INSTALL httpfs FROM core;
-LOAD httpfs;
-LOAD '/tmp/quack-result-metadata/build/extension/quack/quack.duckdb_extension';
+-- in any DuckDB session
+INSTALL quack;
+LOAD quack;
 CALL quack_serve('quack:127.0.0.1:9494', token=>'my-secret-token');
 ```
 
-The unsigned flag is scoped to this local test artifact, not a production
-deployment recommendation. The server patch still needs appropriate packaging
-and signing for deployment. Stock signed `INSTALL quack; LOAD quack;` remains
-usable only with explicit `resultMetadata=legacy` on the JDBC connection;
-legacy mode retains the ambiguous Count-column classification behavior.
+The `quack` extension is signed and lives in the **core** repository as
+of DuckDB v1.5.3, so no `-unsigned` flag and no `core_nightly` repository
+are required. (Earlier `1.5.x` builds need `INSTALL quack FROM core_nightly`
+with `duckdb -unsigned`.)
 
 ### 2. Add the driver to your project
-
-Build/install this development checkout with `mvn install`, or use a snapshot
-published from this pass. Earlier 0.7.0 snapshot builds predate the metadata
-capability; verify the exact artifact rather than relying on a cached version.
 
 **Maven:**
 
@@ -56,14 +41,14 @@ capability; verify the exact artifact rather than relying on a cached version.
 <dependency>
     <groupId>dev.brikk.duckdb</groupId>
     <artifactId>quack-jdbc</artifactId>
-    <version>0.7.0-SNAPSHOT</version>
+    <version>0.6.0</version>
 </dependency>
 ```
 
 **Gradle:**
 
 ```groovy
-implementation "dev.brikk.duckdb:quack-jdbc:0.7.0-SNAPSHOT"
+implementation "dev.brikk.duckdb:quack-jdbc:0.6.0"
 ```
 
 **Direct jar download** (for DBeaver, DataGrip, or any tool that takes a `.jar`):
@@ -116,7 +101,6 @@ jdbc:quack://host[:port][/database][?token=…&tls=…]
 | `tokenFile`          | (none)  | Local file containing the authentication token.                           |
 | `tls`                | false   | `true` → use `https://` for the underlying HTTP transport.                |
 | `useEncryption`      | false   | Alias for `tls` (matches the gizmosql-jdbc-driver convention).            |
-| `resultMetadata`     | required | `required` needs the versioned server metadata capability; `legacy` explicitly permits stock v1 and its classification limitation. |
 | `connectTimeout`     | 10      | HTTP connect timeout, as seconds or an ISO-8601 duration like `PT5S`.     |
 | `requestTimeout`     | 60      | Per-request HTTP timeout, as seconds or an ISO-8601 duration like `PT30S`. |
 | `maxResponseBytes`   | 67108864 | Maximum HTTP response body bytes (64 MiB); positive integer. |
@@ -140,15 +124,6 @@ Unrecognized nonblank values fail connection setup rather than selecting
 plaintext. Missing or blank values retain the existing `false` behavior.
 The `tls` key takes precedence over `useEncryption`; URL values take precedence
 over connection Properties for the same key.
-
-Required mode negotiates `X-Quack-Result-Metadata: 1` and classifies the actual
-server result as query, changed rows, or nothing. Missing capability fails
-before SQL execution. Missing or malformed negotiated metadata never falls
-back to aliases. Legacy mode does not request the capability; upgrading only
-the server does not fix a connection explicitly configured as legacy.
-`executeQuery`/`executeUpdate` result-kind mismatches are detected **after**
-execution, because Quack's PREPARE request executes the statement; these checks
-do not prevent side effects from a mismatched call.
 
 ### Basic timeout configuration
 
@@ -251,7 +226,7 @@ try (Connection conn = driver.connect(
                     .connectTimeout(uri.connectTimeout())
                     .build();
             return new QuackHttpTransport(uri.httpUri(), httpClient, uri.requestTimeout(),
-                    uri.extraHttpHeaders(), uri.decodeLimits(), uri.requiresResultMetadata());
+                    uri.extraHttpHeaders(), uri.decodeLimits());
         })) {
     // use the connection normally
 }
@@ -259,22 +234,19 @@ try (Connection conn = driver.connect(
 
 ## Required Verification
 
-CI builds the pinned server patch and runs the full oracle profile with required
-fixtures. To reproduce after building the extension:
+CI uses stock signed core extensions and runs the full oracle profile with
+required fixtures. To reproduce:
 
 ```bash
 QUACK_IT_DUCKDB=/path/to/duckdb \
-QUACK_IT_RESULT_METADATA_EXTENSION=/tmp/quack-result-metadata/build/extension/quack/quack.duckdb_extension \
 mvn --batch-mode --no-transfer-progress -Poracle -Dquack.it.required=true verify
 ```
 
-Required mode fails on missing CLI, patched artifact, or oracle dependencies;
+Required mode fails on missing CLI or oracle dependencies;
 CI also rejects missing or skipped integration reports. Fixture logs record
-actual server/extension identities. Patched-server tests use the explicit local
-unsigned artifact; stock compatibility tests separately enforce signed core
-loading and explicit legacy mode. Optional local test runs retain auto-skipping
-when their fixture is unavailable. This does not change the independent snapshot
-publication workflow or claim a production signing qualification for the patch.
+actual server/extension identities and verify signed core loading. Optional local
+test runs retain auto-skipping when their fixture is unavailable. This does not
+change the independent snapshot publication workflow.
 
 ## DBeaver
 

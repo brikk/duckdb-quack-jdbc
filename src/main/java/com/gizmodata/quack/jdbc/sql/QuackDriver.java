@@ -104,16 +104,9 @@ public final class QuackDriver implements Driver {
                 + DecodeLimits.DEFAULT.maxNestingDepth() + ").";
         maxNestingDepth.required = false;
 
-        DriverPropertyInfo resultMetadata = new DriverPropertyInfo("resultMetadata",
-                info != null ? info.getProperty("resultMetadata", "required") : "required");
-        resultMetadata.choices = new String[]{"required", "legacy"};
-        resultMetadata.description = "Require patched-server result metadata (default: required). "
-                + "Explicit legacy supports stock v1 with ambiguous alias-based result classification.";
-        resultMetadata.required = false;
-
         return new DriverPropertyInfo[]{
                 token, password, tokenEnv, tokenFile, tls, connectTimeout, requestTimeout,
-                maxResponseBytes, maxDecodedBytes, maxNestingDepth, resultMetadata
+                maxResponseBytes, maxDecodedBytes, maxNestingDepth
         };
     }
 

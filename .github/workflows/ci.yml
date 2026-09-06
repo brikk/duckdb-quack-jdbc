@@ -37,17 +37,6 @@ jobs:
           echo "DuckDB CLI: $CLI"
           "$CLI" --version
 
-      - name: Build result-metadata test extension
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y ninja-build cmake
-          bash tools/build-quack-test-extension.sh "$RUNNER_TEMP/quack-result-metadata"
-          EXTENSION="$RUNNER_TEMP/quack-result-metadata/build/extension/quack/quack.duckdb_extension"
-          test -s "$EXTENSION"
-          echo "QUACK_IT_RESULT_METADATA_EXTENSION=$EXTENSION" >> "$GITHUB_ENV"
-          sha256sum "$EXTENSION"
-
       - name: Build and run all tests
         id: tests
         run: mvn --batch-mode --no-transfer-progress -Poracle -Dquack.it.required=true verify
