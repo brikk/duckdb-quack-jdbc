@@ -373,6 +373,7 @@ Explicitly unsupported FSST, native bind parameters, array ResultSets, updatable
 ## Build And Coverage Improvements
 
 - **I1. Make oracle parity part of CI.** `.github/workflows/ci.yml:35-36` runs the default profile; `pom.xml:64,108-110` excludes oracle tests unless requested. The release gate therefore does not exercise the advertised parity suite.
+  **Resolution (2026-09-06): resolved.** The test job now runs Maven with -Poracle, so tag publication's existing dependency on that job includes native oracle checks. Required integration execution and report auditing are separately tracked under I3.
 - **I2. Gate snapshot publication on successful verification.** `.github/workflows/publish-snapshot.yml:3-6,25-29` is a separate push-triggered workflow using -DskipTests, independent of CI success. A failing main revision can still be deployed as a snapshot.
 - **I3. Require integration execution in CI.** Local auto-skipping is useful, but CI should fail if the fixture is unavailable and assert/log the CLI and loaded extension versions. Keep released-server checks separate from prerelease compatibility runs.
 - **I4. Expand oracle checks beyond type codes/names.** `OracleParityIntegrationTest.java:82-86` compares only these two properties; add actual values, wrapper class compatibility, null handling, exact numeric boundaries, unsigned values, temporal zones, tuples, and typed conversions.

@@ -8,6 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **I1:** CI and its dependent release job now include the oracle parity profile.
 - **L4:** Driver constants, metadata, and handshake identity derive from Maven's
   version. Database version metadata uses the actual server handshake identity
   rather than hardcoded major/minor values.

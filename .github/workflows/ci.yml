@@ -33,7 +33,7 @@ jobs:
           "$HOME/.duckdb/cli/${DUCKDB_VERSION}/duckdb" --version
 
       - name: Build and run all tests
-        run: mvn --batch-mode --no-transfer-progress verify
+        run: mvn --batch-mode --no-transfer-progress -Poracle verify
 
       - name: Upload test reports on failure
         if: failure()
