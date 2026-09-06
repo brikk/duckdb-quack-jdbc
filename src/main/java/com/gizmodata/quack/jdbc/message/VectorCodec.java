@@ -16,6 +16,7 @@ import com.gizmodata.quack.jdbc.type.PhysicalTypeUtil;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.Instant;
+import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -292,8 +293,20 @@ public final class VectorCodec {
             return new DecodedVector.LongVec(type, arr, null);
         }
         Object[] values = new Object[count];
+        boolean temporal = switch (type.id()) {
+            case DATE, TIME, TIME_NS, TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP, TIMESTAMP_NS, TIMESTAMP_TZ -> true;
+            default -> false;
+        };
+        long current = start;
         for (int i = 0; i < count; i++) {
-            values[i] = decodeSequenceValue(type, start + increment * (long) i);
+            values[i] = decodeSequenceValue(type, current);
+            if (i + 1 < count) {
+                try {
+                    current = temporal ? Math.addExact(current, increment) : current + increment;
+                } catch (ArithmeticException e) {
+                    throw new QuackProtocolException("Temporal sequence overflows " + type.id(), e);
+                }
+            }
         }
         return new DecodedVector.ObjectVec(type, values);
     }
@@ -543,7 +556,7 @@ public final class VectorCodec {
             case INT32 -> {
                 int value = reader.readFixedInt32();
                 if (type.id() == LogicalTypeId.DATE) {
-                    yield LocalDate.ofEpochDay(value);
+                    yield LocalDate.ofEpochDay(checkedDateDays(value));
                 }
                 yield type.id() == LogicalTypeId.DECIMAL
                         ? decimalFromUnscaled(type, BigInteger.valueOf(value))
@@ -580,7 +593,7 @@ public final class VectorCodec {
     private static Object decodeSequenceValue(LogicalType type, long value) {
         return switch (type.id()) {
             case INTEGER -> (int) value;
-            case DATE -> LocalDate.ofEpochDay(value);
+            case DATE -> LocalDate.ofEpochDay(checkedDateDays(value));
             case BIGINT -> value;
             case UBIGINT -> new HugeIntParts(0, value).toUnsignedBigInteger();
             default -> decodeInt64LogicalValue(type, value);
@@ -589,33 +602,46 @@ public final class VectorCodec {
 
     private static Object decodeInt64LogicalValue(LogicalType type, long value) {
         return switch (type.id()) {
-            case TIME -> microsToLocalTime(value);
-            case TIME_NS -> LocalTime.ofNanoOfDay(value);
+            case TIME, TIME_NS -> {
+                long scale = type.id() == LogicalTypeId.TIME ? 1_000 : 1;
+                if (value < 0 || value >= 86_400_000_000_000L / scale) {
+                    throw new QuackUnsupportedTypeException(type.id() + " value cannot be represented as LocalTime");
+                }
+                yield LocalTime.ofNanoOfDay(value * scale);
+            }
             case TIME_TZ -> value;
-            case TIMESTAMP_SEC -> LocalDateTime.ofInstant(Instant.ofEpochSecond(value), ZoneOffset.UTC);
-            case TIMESTAMP_MS -> LocalDateTime.ofInstant(Instant.ofEpochMilli(value), ZoneOffset.UTC);
-            case TIMESTAMP -> microsToLocalDateTime(value);
-            case TIMESTAMP_NS -> LocalDateTime.ofInstant(
-                    Instant.ofEpochSecond(value / 1_000_000_000L, value % 1_000_000_000L), ZoneOffset.UTC);
-            case TIMESTAMP_TZ -> OffsetDateTime.ofInstant(microsToInstant(value), ZoneOffset.UTC);
+            case TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP, TIMESTAMP_NS, TIMESTAMP_TZ -> {
+                if (value == -Long.MAX_VALUE || value == Long.MAX_VALUE) {
+                    throw new QuackUnsupportedTypeException("Infinite " + type.id() + " values are not supported");
+                }
+                long units = switch (type.id()) {
+                    case TIMESTAMP_SEC -> 1;
+                    case TIMESTAMP_MS -> 1_000;
+                    case TIMESTAMP_NS -> 1_000_000_000;
+                    default -> 1_000_000;
+                };
+                try {
+                    Instant instant = Instant.ofEpochSecond(Math.floorDiv(value, units),
+                            Math.floorMod(value, units) * (1_000_000_000L / units));
+                    yield type.id() == LogicalTypeId.TIMESTAMP_TZ ? OffsetDateTime.ofInstant(instant, ZoneOffset.UTC)
+                            : LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
+                } catch (DateTimeException e) {
+                    throw new QuackUnsupportedTypeException(type.id() + " value is outside the Java temporal range");
+                }
+            }
             case DECIMAL -> decimalFromUnscaled(type, BigInteger.valueOf(value));
             default -> value;
         };
     }
 
-    private static LocalTime microsToLocalTime(long micros) {
-        long nanos = Math.multiplyExact(micros, 1_000L);
-        return LocalTime.ofNanoOfDay(Math.floorMod(nanos, 86_400L * 1_000_000_000L));
-    }
-
-    private static LocalDateTime microsToLocalDateTime(long micros) {
-        return LocalDateTime.ofInstant(microsToInstant(micros), ZoneOffset.UTC);
-    }
-
-    private static Instant microsToInstant(long micros) {
-        long seconds = Math.floorDiv(micros, 1_000_000L);
-        long microsPart = Math.floorMod(micros, 1_000_000L);
-        return Instant.ofEpochSecond(seconds, microsPart * 1_000L);
+    private static int checkedDateDays(long days) {
+        if (days < Integer.MIN_VALUE || days > Integer.MAX_VALUE) {
+            throw new QuackProtocolException("DATE value is outside the int32 day range");
+        }
+        if (days == -Integer.MAX_VALUE || days == Integer.MAX_VALUE) {
+            throw new QuackUnsupportedTypeException("Infinite DATE values are not supported");
+        }
+        return (int) days;
     }
 
     private static Object decodeEnumOrInt(LogicalType type, int index) {
@@ -902,7 +928,7 @@ public final class VectorCodec {
             case UINT16 -> buf.writeFixedUint16(encodeEnumOrInt(type, value, 0));
             case INT32 -> {
                 if (type.id() == LogicalTypeId.DATE) {
-                    buf.writeFixedInt32(value == null ? 0 : (int) ((LocalDate) value).toEpochDay());
+                    buf.writeFixedInt32(value == null ? 0 : checkedDateDays(((LocalDate) value).toEpochDay()));
                 } else if (type.id() == LogicalTypeId.DECIMAL) {
                     buf.writeFixedInt32(value == null ? 0 : decimalUnscaled(type, value).intValueExact());
                 } else {

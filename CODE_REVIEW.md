@@ -2,7 +2,7 @@
 
 Reviewed 2026-09-05 at `/home/jayson/DEV/brikk/fork-quack-jdbc`, version `0.7.0-SNAPSHOT`.
 
-This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Approved implementation passes resolve B1-B12, B18, B19, B29, B32, B39, and B40; resolution notes and V5-V15 record the scope and verification. Earlier fixes were committed as af771d2, followed by B8 as 5f366ac, B11 as 3104d54, B7 as 974f8d3, B12/B32 as afa7d03, B39 as 983687d, B40 as 68c7bfb, B19 as 7d20147, and B18 as 592a4ac. B29 is the next separate fix. Existing changes to `CLAUDE.md` and `DUCKDB_COMPATIBILITY.md` were preserved.
+This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Approved implementation passes resolve B1-B12, B18, B19, B29, B30, B32, B39, and B40; resolution notes and V5-V16 record the scope and verification. Earlier fixes were committed as af771d2, followed by B8 as 5f366ac, B11 as 3104d54, B7 as 974f8d3, B12/B32 as afa7d03, B39 as 983687d, B40 as 68c7bfb, B19 as 7d20147, B18 as 592a4ac, and B29 as a4633bc. B30 is the next separate fix. Existing changes to `CLAUDE.md` and `DUCKDB_COMPATIBILITY.md` were preserved.
 
 All source references below are relative to the repository root. `sql/`, `message/`, `codec/`, `type/`, and `transport/` abbreviate directories under `src/main/java/com/gizmodata/quack/jdbc/`. Original finding line numbers refer to the reviewed baseline; subsequent edits may shift them. Keep the original evidence alongside resolution notes.
 
@@ -17,7 +17,7 @@ Use these IDs in requests, changes, tests, and follow-up discussions, for exampl
 | C | C1-C4 | Native-parity observations requiring a compatibility decision before changes |
 | I | I1-I9 | Build, testing, and engineering improvements |
 | S | S1-S8 | Strengths to preserve, not implementation tasks |
-| V | V1-V15 | Verification evidence and limitations, not implementation tasks |
+| V | V1-V16 | Verification evidence and limitations, not implementation tasks |
 
 IDs are permanent and independent of severity, priority rank, and document order. B1-B40 match the original full report's numbered findings, not the shorter chat summary's numbering. Never renumber or reuse an ID; record resolution under the existing item and append new IDs for new findings. If an item needs separate work units, retain its parent ID and introduce suffixes such as B4a and B4b.
 
@@ -258,6 +258,8 @@ The multiplyExact of seconds can fail even when adding the positive fraction wou
 Location: `message/VectorCodec.java:535-538,581-609`.
 
 DATE infinity becomes +5881580-07-11; TIMESTAMP_NS infinity becomes an ordinary-looking date in 2262; TIME 24:00 becomes 00:00. Define a deliberate representation or reject unsupported special values instead of silently substituting a finite value. Confirmed against 1.5.5.
+
+**Resolution (2026-09-06): resolved by explicit rejection.** DATE and all five timestamp variants reject +/-infinity before constructing Java values. TIME/TIME_NS reject negative values, 24:00, and larger payloads rather than applying modulo; finite timestamps outside Java's range fail with QuackUnsupportedTypeException. DATE decoding/APPEND validates int32 days before narrowing. Temporal SEQUENCE checks each step with exact addition, preserving valid progressions whose index-product would overflow while rejecting actual overflow and later special values. B8's validity-first null handling, finite signed-min payloads, B11 Calendar semantics, and TIMETZ's packed Long representation remain unchanged. See V16.
 
 ### B31. BIGNUM binary storage is decoded as UTF-8 [P2]
 
@@ -540,6 +542,14 @@ B19/B18 were pushed before this pass. B29 adds two independent codec tests and o
 Full command on 2026-09-06: `QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn --batch-mode --no-transfer-progress -Poracle clean verify`.
 
 Result: BUILD SUCCESS; 303 tests, zero failures/errors, two existing networking-environment skips. All integration suites ran against DuckDB 1.5.5 with native oracle 1.5.5.0. Runtime Java 21.0.2; Java 17 target. No new runtime dependencies. Pre-existing CLAUDE.md and DUCKDB_COMPATIBILITY.md remain untouched.
+
+### V16. B30 special temporal value verification
+
+Five codec methods exercise independent FLAT/CONSTANT/DICTIONARY/SEQUENCE fixtures, all temporal endpoints, unsupported values, invalid masked payloads/alignment, DATE writes, and checked sequence progression. Two live methods cover scalar/nested special values and finite signed-min DATE/US/NS retrieval. Initial tests reproduced the corruption/rejection gaps. The signed-min live query uses explicit aliases: DuckDB 1.5.5's optimizer otherwise calls ToSQLString on folded timestamp constants and fails its own midnight conversion before Quack decoding. Aliases avoid that naming path without replacing or skipping raw temporal retrieval. Independent review found no B30 issues.
+
+Full command on 2026-09-06: `QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn --batch-mode --no-transfer-progress -Poracle clean verify`.
+
+Result: BUILD SUCCESS; 310 tests, zero failures/errors, two existing networking-environment skips. All integration suites ran on DuckDB 1.5.5 with native oracle 1.5.5.0. Java 21.0.2 runtime; Java 17 target. B29's live APPEND boundary tests and all Calendar/null/nested regressions remain green. Pre-existing CLAUDE.md and DUCKDB_COMPATIBILITY.md remain untouched.
 
 ## Top Five Priorities
 

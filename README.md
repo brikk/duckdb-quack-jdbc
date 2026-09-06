@@ -368,6 +368,14 @@ Timestamp APPEND checks the final wire-unit value rather than an intermediate
 seconds product. It rejects overflow and infinity-sentinel collisions while
 preserving finite signed-min payloads and existing sub-unit truncation.
 
+DATE and timestamp infinities are explicitly unsupported as Java temporal
+values. TIME/TIME_NS outside `00:00 <= value < 24:00`, including `24:00`, and
+timestamps outside Java's representable range also fail rather than normalize.
+Cast such values to VARCHAR in SQL when their textual representation is needed.
+Null validity is checked before payload conversion; a signed-min payload with
+validity set remains finite where representable. TIMETZ still returns its
+existing lossless packed `Long`, not a new OffsetTime representation.
+
 The `Calendar` overloads of `getDate`, `getTime`, `getTimestamp`, `setDate`,
 `setTime`, and `setTimestamp` use the supplied timezone for supported temporal
 conversions. Zone-less timestamps are interpreted in that timezone on reads;

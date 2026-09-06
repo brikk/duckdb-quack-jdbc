@@ -73,6 +73,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   milliseconds, microseconds, nanoseconds, and zoned instants. Negative-boundary
   cancellation is preserved; overflow and infinity-sentinel collisions are
   rejected without changing fractional truncation or finite signed-min values.
+- **B30:** DATE/timestamp infinities and TIME/TIME_NS values outside LocalTime's
+  range now fail explicitly instead of becoming ordinary values. DATE writes
+  and temporal sequences are range-checked; validity-masked nulls and finite
+  signed-min values retain their meanings. TIMETZ's raw packed representation
+  and Calendar semantics are unchanged.
 
 Review IDs and verification details are recorded in [CODE_REVIEW.md](CODE_REVIEW.md).
 Other findings remain open; the review records current resolution status.

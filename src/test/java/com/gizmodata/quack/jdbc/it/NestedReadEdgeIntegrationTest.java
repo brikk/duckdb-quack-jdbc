@@ -1,5 +1,6 @@
 package com.gizmodata.quack.jdbc.it;
 
+import com.gizmodata.quack.jdbc.QuackUnsupportedTypeException;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
@@ -17,6 +18,9 @@ import java.sql.Statement;
 import java.sql.Struct;
 import java.sql.Types;
 import java.time.LocalDateTime;
+import java.time.LocalDate;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.time.LocalTime;
 import java.util.Arrays;
 import java.util.List;
@@ -28,6 +32,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 @Tag("integration")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -49,6 +55,43 @@ public class NestedReadEdgeIntegrationTest {
 
     private Connection connect() throws SQLException {
         return DriverManager.getConnection(server.jdbcUrl());
+    }
+
+    @Test
+    void specialTemporalValuesFailExplicitlyAtScalarAndNestedBoundaries() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            for (String type : new String[]{"DATE", "TIMESTAMP_S", "TIMESTAMP_MS", "TIMESTAMP", "TIMESTAMP_NS", "TIMESTAMPTZ", "TIME", "TIME_NS"}) {
+                String[] values = type.equals("TIME") || type.equals("TIME_NS")
+                        ? new String[]{"24:00:00"} : new String[]{"infinity", "-infinity"};
+                for (String value : values) {
+                    String expression = "'" + value + "'::" + type;
+                    for (String nested : new String[]{expression, "[" + expression + "]", "array_value(" + expression + ")",
+                            "{'v': " + expression + "}", "MAP {1: " + expression + "}"}) {
+                        SQLException error = assertThrows(SQLException.class, () -> s.executeQuery("SELECT " + nested));
+                        assertInstanceOf(QuackUnsupportedTypeException.class, error.getCause());
+                    }
+                }
+            }
+            SQLException error = assertThrows(SQLException.class, () -> s.executeQuery("SELECT '24:00:00.000000001'::TIME_NS"));
+            assertInstanceOf(QuackUnsupportedTypeException.class, error.getCause());
+        }
+    }
+
+    @Test
+    void signedMinTemporalPayloadsAreFiniteWhenTheServerMarksThemValid() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement(); ResultSet rs = s.executeQuery(
+                "SELECT make_date(-2147483648) AS d, make_timestamp(-9223372036854775808) AS us, make_timestamp_ns(-9223372036854775808) AS ns")) {
+            assertTrue(rs.next());
+            assertEquals(LocalDate.ofEpochDay(Integer.MIN_VALUE), rs.getObject(1));
+            assertFalse(rs.wasNull());
+            for (int column = 2; column <= 3; column++) {
+                long units = column == 2 ? 1_000_000L : 1_000_000_000L;
+                Instant instant = Instant.ofEpochSecond(Math.floorDiv(Long.MIN_VALUE, units),
+                        Math.floorMod(Long.MIN_VALUE, units) * (1_000_000_000L / units));
+                assertEquals(LocalDateTime.ofInstant(instant, ZoneOffset.UTC), rs.getObject(column));
+                assertFalse(rs.wasNull());
+            }
+        }
     }
 
     @Test
