@@ -76,6 +76,52 @@
     <build>
         <plugins>
             <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>3.6.1</version>
+                <executions>
+                    <execution>
+                        <id>parse-driver-version</id>
+                        <phase>initialize</phase>
+                        <goals><goal>parse-version</goal></goals>
+                        <configuration>
+                            <versionString>${project.version}</versionString>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>add-driver-version-source</id>
+                        <phase>generate-sources</phase>
+                        <goals><goal>add-source</goal></goals>
+                        <configuration>
+                            <sources>
+                                <source>${project.build.directory}/generated-sources/driver-version</source>
+                            </sources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>generate-driver-version</id>
+                        <phase>generate-sources</phase>
+                        <goals><goal>copy-resources</goal></goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/generated-sources/driver-version</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>src/main/version-templates</directory>
+                                    <filtering>true</filtering>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.13.0</version>
@@ -86,6 +132,9 @@
                 <version>3.2.5</version>
                 <configuration>
                     <excludedGroups>${excluded.test.groups}</excludedGroups>
+                    <systemPropertyVariables>
+                        <quack.test.expectedDriverVersion>${project.version}</quack.test.expectedDriverVersion>
+                    </systemPropertyVariables>
                 </configuration>
             </plugin>
             <plugin>

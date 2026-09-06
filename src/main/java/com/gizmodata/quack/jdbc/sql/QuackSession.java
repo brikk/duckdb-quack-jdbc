@@ -31,6 +31,7 @@ public final class QuackSession implements AutoCloseable {
     private final QuackConnection connection;
     private final AtomicLong queryIdSeq = new AtomicLong(1);
     private volatile String connectionId;
+    private volatile Optional<String> serverDuckdbVersion = Optional.empty();
     private volatile boolean closed;
 
     public QuackSession(QuackUri uri, QuackTransport transport) {
@@ -78,6 +79,10 @@ public final class QuackSession implements AutoCloseable {
         return connectionId;
     }
 
+    public Optional<String> serverDuckdbVersion() {
+        return serverDuckdbVersion;
+    }
+
     public boolean isClosed() {
         return closed;
     }
@@ -88,7 +93,7 @@ public final class QuackSession implements AutoCloseable {
         QuackMessage.ConnectionRequest request = new QuackMessage.ConnectionRequest(
                 header,
                 uri.token(),
-                Optional.of("quack-jdbc/0.1.0"),
+                Optional.of(DriverVersion.CLIENT_VERSION),
                 Optional.of(System.getProperty("os.name", "unknown")),
                 Optional.of(QuackConstants.QUACK_VERSION),
                 Optional.of(QuackConstants.QUACK_VERSION));
@@ -99,6 +104,7 @@ public final class QuackSession implements AutoCloseable {
         }
         this.connectionId = connResp.header().connectionId().orElseThrow(
                 () -> new QuackProtocolException("Server did not return a connection_id"));
+        this.serverDuckdbVersion = connResp.serverDuckdbVersion();
     }
 
     /**

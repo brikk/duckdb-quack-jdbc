@@ -15,8 +15,8 @@ import java.util.logging.Logger;
 
 public final class QuackDriver implements Driver {
 
-    public static final int MAJOR_VERSION = 0;
-    public static final int MINOR_VERSION = 1;
+    public static final int MAJOR_VERSION = DriverVersion.MAJOR_VERSION;
+    public static final int MINOR_VERSION = DriverVersion.MINOR_VERSION;
     public static final String DRIVER_NAME = "quack-jdbc";
 
     static {

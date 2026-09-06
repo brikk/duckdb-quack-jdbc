@@ -11,6 +11,9 @@ import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * JDBC DatabaseMetaData modeled on DuckDB's own Java driver so that
@@ -20,6 +23,8 @@ import java.util.List;
  * mirror {@code org.duckdb.DuckDBDatabaseMetaData} closely.
  */
 public final class QuackDatabaseMetaData implements DatabaseMetaData {
+
+    private static final Pattern DATABASE_VERSION_PREFIX = Pattern.compile("^v?([0-9]+)\\.([0-9]+)(?:$|[.+-])");
 
     private final QuackConnection connection;
 
@@ -326,23 +331,25 @@ public final class QuackDatabaseMetaData implements DatabaseMetaData {
         return runQuery(sb.toString());
     }
 
-    // ---- static identity ----
+    // ---- identity ----
 
     @Override public String getURL() { return QuackUri.URL_PREFIX + "//" + connection.uri().host() + ":" + connection.uri().port(); }
     @Override public String getUserName() { return ""; }
     @Override public String getDatabaseProductName() { return "DuckDB (via Quack)"; }
     @Override public String getDatabaseProductVersion() throws SQLException {
+        Optional<String> serverVersion = connection.session().serverDuckdbVersion();
+        if (serverVersion.isPresent()) return serverVersion.get();
         try (Statement s = connection.createStatement(); ResultSet rs = s.executeQuery("PRAGMA version")) {
             if (rs.next()) return rs.getString(1);
         }
         return "";
     }
     @Override public String getDriverName() { return QuackDriver.DRIVER_NAME; }
-    @Override public String getDriverVersion() { return QuackDriver.MAJOR_VERSION + "." + QuackDriver.MINOR_VERSION; }
+    @Override public String getDriverVersion() { return DriverVersion.VERSION; }
     @Override public int getDriverMajorVersion() { return QuackDriver.MAJOR_VERSION; }
     @Override public int getDriverMinorVersion() { return QuackDriver.MINOR_VERSION; }
-    @Override public int getDatabaseMajorVersion() { return 1; }
-    @Override public int getDatabaseMinorVersion() { return 0; }
+    @Override public int getDatabaseMajorVersion() { return databaseVersionComponent(1); }
+    @Override public int getDatabaseMinorVersion() { return databaseVersionComponent(2); }
     @Override public int getJDBCMajorVersion() { return 4; }
     @Override public int getJDBCMinorVersion() { return 2; }
     @Override public String getIdentifierQuoteString() { return "\""; }
@@ -352,6 +359,23 @@ public final class QuackDatabaseMetaData implements DatabaseMetaData {
     @Override public String getProcedureTerm() { return "procedure"; }
     @Override public String getCatalogTerm() { return "catalog"; }
     @Override public String getCatalogSeparator() { return "."; }
+
+    /**
+     * Reads the major (1) or minor (2) numeric prefix, accepting an optional {@code v}
+     * and ignoring patch/build qualifiers. Unknown, unavailable (including a failed
+     * PRAGMA fallback), or overflowing components return 0 rather than adding checked
+     * exceptions to the concrete metadata API. A cached handshake version needs no SQL.
+     */
+    private int databaseVersionComponent(int component) {
+        try {
+            String version = getDatabaseProductVersion();
+            if (version == null) return 0;
+            Matcher matcher = DATABASE_VERSION_PREFIX.matcher(version.trim());
+            return matcher.find() ? Integer.parseInt(matcher.group(component)) : 0;
+        } catch (SQLException | NumberFormatException e) {
+            return 0;
+        }
+    }
 
     @Override
     public String getSQLKeywords() throws SQLException {

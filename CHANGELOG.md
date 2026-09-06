@@ -8,6 +8,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **L4:** Driver constants, metadata, and handshake identity derive from Maven's
+  version. Database version metadata uses the actual server handshake identity
+  rather than hardcoded major/minor values.
 - **B22:** Lazy FETCH failures become SQLException, invalidate the current row,
   and terminate the local cursor without replaying a potentially advanced fetch.
   Off-row getters now fail consistently rather than indexing stale chunks.
