@@ -76,20 +76,26 @@ public final class QuackResultSet extends SkeletalResultSet {
     public boolean next() throws SQLException {
         checkOpen();
         if (exhausted) return false;
-        if (currentChunk == null) {
-            currentChunk = cursor.nextChunk();
-            rowInChunk = 0;
-        } else {
-            rowInChunk++;
+        int nextRow = rowInChunk + 1;
+        while (currentChunk == null || nextRow >= currentChunk.rowCount()) {
+            currentChunk = null;
+            rowInChunk = -1;
+            try {
+                currentChunk = cursor.nextChunk();
+            } catch (RuntimeException e) {
+                // FETCH may have advanced the server: never retry this cursor.
+                // Keep the ResultSet open but exhausted until explicit close().
+                exhausted = true;
+                cursor.close();
+                throw new SQLException("Failed to fetch result rows: " + e.getMessage(), e);
+            }
+            if (currentChunk == null) {
+                exhausted = true;
+                return false;
+            }
+            nextRow = 0;
         }
-        while (currentChunk != null && rowInChunk >= currentChunk.rowCount()) {
-            currentChunk = cursor.nextChunk();
-            rowInChunk = 0;
-        }
-        if (currentChunk == null) {
-            exhausted = true;
-            return false;
-        }
+        rowInChunk = nextRow;
         absoluteRow++;
         return true;
     }
@@ -97,6 +103,8 @@ public final class QuackResultSet extends SkeletalResultSet {
     @Override
     public void close() {
         closed = true;
+        currentChunk = null;
+        rowInChunk = -1;
         cursor.close();
     }
 
@@ -107,7 +115,7 @@ public final class QuackResultSet extends SkeletalResultSet {
 
     @Override
     public int getRow() {
-        return absoluteRow;
+        return rowInChunk < 0 ? 0 : absoluteRow;
     }
 
     @Override
@@ -139,7 +147,7 @@ public final class QuackResultSet extends SkeletalResultSet {
         if (columnIndex < 1 || columnIndex > columnNames.size()) {
             throw new SQLException("Column index out of range: " + columnIndex);
         }
-        if (currentChunk == null) {
+        if (currentChunk == null || rowInChunk < 0 || rowInChunk >= currentChunk.rowCount()) {
             throw new SQLException("Not on a row");
         }
         DecodedVector col = currentChunk.columns().get(columnIndex - 1);

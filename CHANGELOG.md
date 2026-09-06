@@ -8,6 +8,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **B22:** Lazy FETCH failures become SQLException, invalidate the current row,
+  and terminate the local cursor without replaying a potentially advanced fetch.
+  Off-row getters now fail consistently rather than indexing stale chunks.
 - **B16:** Re-execution closes and clears previous results before transaction
   startup or prepared-parameter processing can fail, preventing stale result
   sets and update counts after failed execution.

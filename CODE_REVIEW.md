@@ -219,6 +219,8 @@ Location: `sql/QuackResultSet.java:61-73,127-131`.
 
 An injected error fetching the next page escapes next as QuackServerException, whereas initial execution translates it to SQLException. The failed advance leaves the previous chunk with an out-of-range row index; a subsequent getter throws ArrayIndexOutOfBoundsException. Translate at the JDBC boundary and mark the current row invalid on failed advancement. Confirmed with a local transport fault.
 
+**Resolution (2026-09-06): resolved.** next invalidates row state before fetching, translates runtime fetch failures to SQLException with the original cause, closes the local cursor, and exhausts the result without retrying a potentially advanced server cursor. The ResultSet remains open until explicit close; later next returns false and off-row getters reject access. End-of-results/close clear row state, and getRow returns zero off-row. Nine focused QuackResultSetFetchTest cases passed, covering server/protocol/transport failures, multiple pages, nulls, Calendar reads, and empty terminal pages. Independent review found no B22 issues. Broader connection ownership remains B17.
+
 ### B23. Column class metadata contradicts returned objects [P2]
 
 Location: `sql/QuackResultSetMetaData.java:62-77`.
