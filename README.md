@@ -257,6 +257,25 @@ try (Connection conn = driver.connect(
 }
 ```
 
+## Required Verification
+
+CI builds the pinned server patch and runs the full oracle profile with required
+fixtures. To reproduce after building the extension:
+
+```bash
+QUACK_IT_DUCKDB=/path/to/duckdb \
+QUACK_IT_RESULT_METADATA_EXTENSION=/tmp/quack-result-metadata/build/extension/quack/quack.duckdb_extension \
+mvn --batch-mode --no-transfer-progress -Poracle -Dquack.it.required=true verify
+```
+
+Required mode fails on missing CLI, patched artifact, or oracle dependencies;
+CI also rejects missing or skipped integration reports. Fixture logs record
+actual server/extension identities. Patched-server tests use the explicit local
+unsigned artifact; stock compatibility tests separately enforce signed core
+loading and explicit legacy mode. Optional local test runs retain auto-skipping
+when their fixture is unavailable. This does not change the independent snapshot
+publication workflow or claim a production signing qualification for the patch.
+
 ## DBeaver
 
 `quack-jdbc` implements the full JDBC `DatabaseMetaData` surface that

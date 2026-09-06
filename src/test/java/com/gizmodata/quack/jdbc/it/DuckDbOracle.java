@@ -15,10 +15,17 @@ public final class DuckDbOracle {
     }
 
     public static boolean available() {
+        return available(QuackServerFixture.required(), DuckDbOracle.class.getClassLoader());
+    }
+
+    static boolean available(boolean required, ClassLoader loader) {
         try {
-            Class.forName(DRIVER_CLASS);
+            Class.forName(DRIVER_CLASS, true, loader);
             return true;
         } catch (ClassNotFoundException e) {
+            if (required) {
+                throw new IllegalStateException("Required integration tests need the DuckDB JDBC oracle; enable -Poracle", e);
+            }
             return false;
         }
     }

@@ -28,19 +28,95 @@ jobs:
         env:
           DUCKDB_VERSION: 1.5.5
         run: |
-          curl -sSL https://install.duckdb.org | sh
+          set -euo pipefail
+          curl -fsSL https://install.duckdb.org | sh
           echo "$HOME/.duckdb/cli/${DUCKDB_VERSION}" >> "$GITHUB_PATH"
-          "$HOME/.duckdb/cli/${DUCKDB_VERSION}/duckdb" --version
+          CLI=$(realpath "$HOME/.duckdb/cli/${DUCKDB_VERSION}/duckdb")
+          test -f "$CLI" && test -x "$CLI"
+          echo "QUACK_IT_DUCKDB=$CLI" >> "$GITHUB_ENV"
+          echo "DuckDB CLI: $CLI"
+          "$CLI" --version
+
+      - name: Build result-metadata test extension
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake
+          bash tools/build-quack-test-extension.sh "$RUNNER_TEMP/quack-result-metadata"
+          EXTENSION="$RUNNER_TEMP/quack-result-metadata/build/extension/quack/quack.duckdb_extension"
+          test -s "$EXTENSION"
+          echo "QUACK_IT_RESULT_METADATA_EXTENSION=$EXTENSION" >> "$GITHUB_ENV"
+          sha256sum "$EXTENSION"
 
       - name: Build and run all tests
-        run: mvn --batch-mode --no-transfer-progress -Poracle verify
+        id: tests
+        run: mvn --batch-mode --no-transfer-progress -Poracle -Dquack.it.required=true verify
+
+      - name: Require complete integration reports
+        if: ${{ always() && steps.tests.outcome != 'skipped' }}
+        shell: python
+        run: |
+          import pathlib
+          import re
+          import xml.etree.ElementTree as ET
+
+          expected = set()
+          for source in pathlib.Path("src/test").rglob("*.java"):
+              text = source.read_text()
+              if not (re.search(r'@Tag\(\s*"integration"\s*\)', text)
+                      or source.stem.endswith("IntegrationTest")):
+                  continue
+              package = re.search(r"^package\s+([\w.]+)\s*;", text, re.MULTILINE)
+              if package:
+                  expected.add(package.group(1) + "." + source.stem)
+          if not expected:
+              raise SystemExit("No integration test classes discovered")
+
+          allowed_skips = {
+              ("com.gizmodata.quack.jdbc.transport.QuackHttpTransportTest",
+               "fallsThroughToIpv6WhenIpv4HasNoListener"): "ipv6LoopbackAvailable",
+              ("com.gizmodata.quack.jdbc.transport.QuackHttpTransportLimitsTest",
+               "connectFailuresStillTryNextAddress"): "requires multiple localhost addresses",
+          }
+          seen = set()
+          errors = []
+          reports = sorted(pathlib.Path("target/surefire-reports").glob("TEST-*.xml"))
+          for report in reports:
+              root = ET.parse(report).getroot()
+              for suite in root.iter("testsuite"):
+                  cases = suite.findall("testcase")
+                  name = suite.get("name", "")
+                  if name in expected:
+                      if not cases or int(suite.get("tests", "0")) == 0:
+                          errors.append(f"Empty integration report: {report}")
+                      else:
+                          seen.add(name)
+                  for case in cases:
+                      classname = case.get("classname", name)
+                      method = case.get("name", "").removesuffix("()")
+                      if classname in expected:
+                          seen.add(classname)
+                      if case.find("failure") is not None or case.find("error") is not None:
+                          errors.append(f"Failed test: {classname}#{method}")
+                      skipped = case.find("skipped")
+                      if skipped is not None:
+                          reason = skipped.get("message", "") + " " + "".join(skipped.itertext())
+                          allowed_reason = allowed_skips.get((classname, method))
+                          if classname in expected or not allowed_reason or allowed_reason not in reason:
+                              errors.append(f"Unexpected skip: {classname}#{method}: {reason}")
+          errors.extend(f"Missing integration report: {name}" for name in sorted(expected - seen))
+          print(f"Integration reports: {len(seen & expected)}/{len(expected)} classes; {len(reports)} total reports")
+          if errors:
+              raise SystemExit("\n".join(errors))
 
       - name: Upload test reports on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: surefire-reports
-          path: target/surefire-reports/
+          name: surefire-reports-and-fixture-logs
+          path: |
+            target/surefire-reports/
+            target/quack-fixture-logs/**/*.log
 
   publish:
     name: Publish to Maven Central

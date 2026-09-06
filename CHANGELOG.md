@@ -8,6 +8,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **I3:** CI requires version-verified integration fixtures and oracle presence,
+  builds the pinned metadata-capable test server, rejects missing/skipped
+  integration reports, and preserves fixture diagnostics on failure.
 - **B15:** Statement classification uses authoritative metadata from the included
   pinned server patch. Required metadata is now the default; stock servers need
   explicit legacy mode, which retains the old classification limitation. Binary
