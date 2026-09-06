@@ -32,9 +32,9 @@ public final class QuackBlob implements Blob {
         if (pos < 1 || length < 0) {
             throw new SQLException("Invalid position/length: pos=" + pos + " length=" + length);
         }
+        if (pos > bytes.length) return new byte[0];
         int start = (int) (pos - 1);
-        if (start >= bytes.length) return new byte[0];
-        int end = Math.min(bytes.length, start + length);
+        int end = start + Math.min(length, bytes.length - start);
         return Arrays.copyOfRange(bytes, start, end);
     }
 
@@ -46,14 +46,20 @@ public final class QuackBlob implements Blob {
 
     @Override
     public InputStream getBinaryStream(long pos, long length) throws SQLException {
+        checkFreed();
+        // Unlike getBytes, this method requires the entire one-based range to exist.
+        if (pos < 1 || pos > bytes.length || length < 0 || length > bytes.length - (pos - 1)) {
+            throw new SQLException("Invalid position/length: pos=" + pos + " length=" + length);
+        }
         return new ByteArrayInputStream(getBytes(pos, (int) length));
     }
 
     @Override
     public long position(byte[] pattern, long start) throws SQLException {
         checkFreed();
-        if (pattern == null || pattern.length == 0) return -1L;
-        int from = (int) Math.max(1, start) - 1;
+        if (start < 1) throw new SQLException("Invalid search start: " + start);
+        if (pattern == null || pattern.length == 0 || start > bytes.length) return -1L;
+        int from = (int) (start - 1);
         outer:
         for (int i = from; i <= bytes.length - pattern.length; i++) {
             for (int j = 0; j < pattern.length; j++) {
@@ -66,21 +72,34 @@ public final class QuackBlob implements Blob {
 
     @Override
     public long position(Blob pattern, long start) throws SQLException {
-        return position(pattern.getBytes(1, (int) pattern.length()), start);
+        checkFreed();
+        if (start < 1) throw new SQLException("Invalid search start: " + start);
+        if (pattern == null || start > bytes.length) return -1L;
+        long length = pattern.length();
+        if (length < 0) throw new SQLException("Invalid pattern length: " + length);
+        if (length == 0 || length > bytes.length - (start - 1)) return -1L;
+        byte[] patternBytes = pattern.getBytes(1, (int) length);
+        if (patternBytes == null || patternBytes.length != length) {
+            throw new SQLException("Blob pattern did not supply its declared length");
+        }
+        return position(patternBytes, start);
     }
 
     @Override
     public int setBytes(long pos, byte[] bytes) throws SQLException {
+        checkFreed();
         throw new SQLFeatureNotSupportedException("Blob.setBytes is not supported by quack-jdbc");
     }
 
     @Override
     public int setBytes(long pos, byte[] bytes, int offset, int len) throws SQLException {
+        checkFreed();
         throw new SQLFeatureNotSupportedException("Blob.setBytes is not supported by quack-jdbc");
     }
 
     @Override
     public OutputStream setBinaryStream(long pos) throws SQLException {
+        checkFreed();
         throw new SQLFeatureNotSupportedException("Blob.setBinaryStream is not supported by quack-jdbc");
     }
 

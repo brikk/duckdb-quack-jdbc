@@ -8,6 +8,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **B26:** Array/Blob ranges and stream lengths are checked before integer
+  narrowing. Exact-length reads no longer consume their tails or accept premature
+  EOF; unsupported oversized stream lengths fail before reading caller input.
 - **I2:** Snapshot publication now waits for the same CI run's successful tests
   and integration-report checks, checks out that run's exact SHA, and publishes
   only SNAPSHOT versions from main. Manual publication uses the CI workflow.

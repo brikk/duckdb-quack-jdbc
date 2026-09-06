@@ -370,6 +370,11 @@ GizmoData roadmap.
   not exceed the marker count. `clearParameters()` removes current bindings
   without changing queued batches. `getMetaData()` may probe missing values
   as NULL but does not bind them for subsequent execution.
+- Length-bearing ASCII, binary, and character stream setters consume exactly
+  the declared length, leave remaining input untouched, and report premature EOF.
+  Negative lengths are invalid; lengths above `Integer.MAX_VALUE` are explicitly
+  unsupported by the current in-memory binding implementation. Caller streams
+  are not closed. Array/Blob slice indices are checked before narrowing to int.
 - Statement and prepared-statement batches stop at the first SQL error.
   `BatchUpdateException.getUpdateCounts()` contains only the successful
   execution prefix, including genuine zero-row updates; the failed command

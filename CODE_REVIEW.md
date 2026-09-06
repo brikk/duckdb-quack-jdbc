@@ -249,6 +249,8 @@ Location: `sql/QuackArray.java:52-56`; `sql/QuackBlob.java:30-60`; `sql/QuackPre
 
 Array and Blob slices at 4294967297 return the first element/byte. A Blob stream with negative length -4294967296 is accepted as zero. A character stream length of 4294967297 becomes one character; other values throw unchecked errors. The reader helper also consumes past the requested character count. Validate ranges and arithmetic as long before narrowing, and bound each read to the remaining requested count. Reproduced with small in-memory objects/streams.
 
+**Resolution (2026-09-06): resolved.** Array/Blob indices, search starts, and lengths are validated in the long domain before narrowing. Maximum-count slices retain their existing clipping behavior; Blob streams require an existing exact range. Foreign Blob patterns that cannot fit are not materialized. Length-bearing stream setters reject negative lengths and explicitly reject lengths above Integer.MAX_VALUE before consuming input; valid reads consume exactly the declared length, report premature EOF as SQLException, leave remaining input untouched, and do not close caller streams. Unknown-length variants still read to EOF. The 198-case QuackRangeValidationTest passed on Java 17/21; a live stock-Quack regression verifies bound stream values, untouched tails, and overflow-safe Array/Blob slices. Independent review found no B26 issues. Typed binding, array SQL rendering, and broader payload ownership remain separate.
+
 ### B27. Closed/freed objects retain payloads [P2]
 
 Location: `sql/QuackResultSet.java:83-86`; `sql/QuackArray.java:21-23,85-88`; `sql/QuackStatement.java:170-175`.

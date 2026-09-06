@@ -28,12 +28,14 @@ public final class QuackArray implements Array {
     }
 
     @Override
-    public String getBaseTypeName() {
+    public String getBaseTypeName() throws SQLException {
+        checkFreed();
         return elementType != null ? JdbcTypeMap.typeName(elementType) : "OTHER";
     }
 
     @Override
-    public int getBaseType() {
+    public int getBaseType() throws SQLException {
+        checkFreed();
         return elementType != null ? JdbcTypeMap.toJdbcType(elementType) : Types.OTHER;
     }
 
@@ -51,8 +53,12 @@ public final class QuackArray implements Array {
     @Override
     public Object getArray(long index, int count) throws SQLException {
         checkFreed();
-        int start = (int) Math.max(1, index) - 1;
-        int end = Math.min(values.size(), start + count);
+        int size = values.size();
+        if (index < 1 || index > (long) size + 1 || count < 0) {
+            throw new SQLException("Invalid index/count: index=" + index + " count=" + count);
+        }
+        int start = (int) (index - 1);
+        int end = start + Math.min(count, size - start);
         return values.subList(start, end).toArray();
     }
 
@@ -63,6 +69,7 @@ public final class QuackArray implements Array {
 
     @Override
     public ResultSet getResultSet() throws SQLException {
+        checkFreed();
         throw new SQLFeatureNotSupportedException(
                 "Array.getResultSet is not supported by quack-jdbc");
     }

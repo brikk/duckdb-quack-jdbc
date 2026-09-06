@@ -1,6 +1,7 @@
 package com.gizmodata.quack.jdbc.sql;
 
 import com.gizmodata.quack.jdbc.QuackProtocolException;
+import java.io.EOFException;
 import java.io.InputStream;
 import java.io.Reader;
 import java.math.BigDecimal;
@@ -338,7 +339,8 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
     @Override public void setAsciiStream(int i, InputStream s, int len) throws SQLException { setAsciiStream(i, s, (long) len); }
     @Override public void setAsciiStream(int i, InputStream s, long len) throws SQLException {
         checkParameterIndex(i);
-        try { setParam(i, s == null ? null : new String(s.readNBytes((int) len), StandardCharsets.US_ASCII)); }
+        int length = streamLength(len);
+        try { setParam(i, s == null ? null : new String(readStream(s, length), StandardCharsets.US_ASCII)); }
         catch (java.io.IOException e) { throw new SQLException(e); }
     }
     @Override public void setAsciiStream(int i, InputStream s) throws SQLException {
@@ -350,7 +352,8 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
     @Override public void setBinaryStream(int i, InputStream s, int len) throws SQLException { setBinaryStream(i, s, (long) len); }
     @Override public void setBinaryStream(int i, InputStream s, long len) throws SQLException {
         checkParameterIndex(i);
-        try { setParam(i, s == null ? null : s.readNBytes((int) len)); }
+        int length = streamLength(len);
+        try { setParam(i, s == null ? null : readStream(s, length)); }
         catch (java.io.IOException e) { throw new SQLException(e); }
     }
     @Override public void setBinaryStream(int i, InputStream s) throws SQLException {
@@ -361,7 +364,8 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
     @Override public void setCharacterStream(int i, Reader r, int len) throws SQLException { setCharacterStream(i, r, (long) len); }
     @Override public void setCharacterStream(int i, Reader r, long len) throws SQLException {
         checkParameterIndex(i);
-        try { setParam(i, r == null ? null : readReader(r, (int) len)); }
+        int length = streamLength(len);
+        try { setParam(i, r == null ? null : readReader(r, length)); }
         catch (java.io.IOException e) { throw new SQLException(e); }
     }
     @Override public void setCharacterStream(int i, Reader r) throws SQLException {
@@ -370,17 +374,31 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
         catch (java.io.IOException e) { throw new SQLException(e); }
     }
 
+    private static int streamLength(long length) throws SQLException {
+        if (length < 0) throw new SQLException("Invalid stream length: " + length);
+        if (length > Integer.MAX_VALUE) {
+            throw new SQLFeatureNotSupportedException("Stream lengths above Integer.MAX_VALUE are not supported by quack-jdbc");
+        }
+        return (int) length;
+    }
+
+    private static byte[] readStream(InputStream stream, int length) throws java.io.IOException {
+        if (length == 0) return new byte[0];
+        // readNBytes grows with actual input, rather than allocating the declared length up front.
+        byte[] bytes = stream.readNBytes(length);
+        if (bytes.length != length) throw new EOFException("Stream ended before the declared length: " + length);
+        return bytes;
+    }
+
     private static String readReader(Reader r, int max) throws java.io.IOException {
         StringBuilder sb = new StringBuilder();
         char[] buf = new char[1024];
-        int total = 0;
-        int n;
-        while ((n = r.read(buf)) > 0) {
-            int take = max < 0 ? n : Math.min(n, max - total);
-            sb.append(buf, 0, take);
-            total += take;
-            if (max >= 0 && total >= max) break;
+        while (max < 0 || sb.length() < max) {
+            int n = r.read(buf, 0, max < 0 ? buf.length : Math.min(buf.length, max - sb.length()));
+            if (n < 0) break;
+            sb.append(buf, 0, n);
         }
+        if (max >= 0 && sb.length() != max) throw new EOFException("Reader ended before the declared length: " + max);
         return sb.toString();
     }
 

@@ -11,6 +11,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.condition.EnabledIf;
 
+import java.io.ByteArrayInputStream;
+import java.io.StringReader;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.sql.Array;
@@ -185,6 +187,45 @@ public class JdbcCoverageIntegrationTest {
     }
 
     // ---- Statement / PreparedStatement ----
+
+    @Test
+    void boundedStreamsAndLongSlicesPreserveValuesOnStockQuack() throws Exception {
+        try (Connection c = connect(); PreparedStatement p = c.prepareStatement("SELECT ? AS a, ? AS b, ? AS c")) {
+            ByteArrayInputStream ascii = new ByteArrayInputStream("abcTAIL".getBytes(StandardCharsets.US_ASCII));
+            ByteArrayInputStream binary = new ByteArrayInputStream(new byte[]{(byte) 0xff, 0, (byte) 0xfe, 7});
+            StringReader characters = new StringReader("x\u6c49TAIL");
+            p.setAsciiStream(1, ascii, 3L);
+            p.setBinaryStream(2, binary, 3L);
+            p.setCharacterStream(3, characters, 2L);
+            assertEquals('T', ascii.read());
+            assertEquals(7, binary.read());
+            assertEquals('T', characters.read());
+            try (ResultSet rs = p.executeQuery()) {
+                assertTrue(rs.next());
+                assertEquals("abc", rs.getString(1));
+                assertArrayEquals(new byte[]{(byte) 0xff, 0, (byte) 0xfe}, rs.getBytes(2));
+                assertEquals("x\u6c49", rs.getString(3));
+            }
+            try (Statement s = c.createStatement(); ResultSet rs = s.executeQuery(
+                    "SELECT [10, 20, 30] AS a, from_hex('FF00FE') AS b")) {
+                assertTrue(rs.next());
+                Array array = rs.getArray(1);
+                Blob blob = rs.getBlob(2);
+                try {
+                    assertArrayEquals(new Object[]{20, 30}, (Object[]) array.getArray(2, Integer.MAX_VALUE));
+                    assertThrows(SQLException.class, () -> array.getArray(4_294_967_297L, 1));
+                    assertArrayEquals(new byte[0], blob.getBytes(4_294_967_297L, 1));
+                    assertThrows(SQLException.class, () -> blob.getBinaryStream(4_294_967_297L, 1));
+                    try (var stream = blob.getBinaryStream(2, 2)) {
+                        assertArrayEquals(new byte[]{0, (byte) 0xfe}, stream.readAllBytes());
+                    }
+                } finally {
+                    array.free();
+                    blob.free();
+                }
+            }
+        }
+    }
 
     @Test
     void batchFailuresReportExecutedPrefixWithoutRunningLaterCommands() throws Exception {
