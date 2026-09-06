@@ -2,7 +2,7 @@
 
 Reviewed 2026-09-05 at `/home/jayson/DEV/brikk/fork-quack-jdbc`, version `0.7.0-SNAPSHOT`.
 
-This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Implementation passes resolve B1-B12, B16, B18, B19, B22, B29-B32, B39, B40, B41, L4, I1, and I3; resolution notes and V5-V20 record the scope and verification. B15 is reclassified as a stock-protocol limitation: adding authoritative result metadata is upstream feature work, not an existing server feature or a driver-release prerequisite. The custom server experiment was withdrawn before publication. Stock signed Quack remains supported without special connection options. Earlier commit history and verification records remain available; unrelated CLAUDE.md and DUCKDB_COMPATIBILITY.md changes were preserved.
+This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Implementation passes resolve B1-B12, B16, B18, B19, B22-B24, B26, B29-B32, B39, B40, B41, L4, and I1-I3; resolution notes and V5-V21 record the scope and verification. B15 is reclassified as a stock-protocol limitation: adding authoritative result metadata is upstream feature work, not an existing server feature or a driver-release prerequisite. The custom server experiment was withdrawn before publication. Stock signed Quack remains supported without special connection options. Earlier commit history and verification records remain available; unrelated CLAUDE.md and DUCKDB_COMPATIBILITY.md changes were preserved.
 
 All source references below are relative to the repository root. `sql/`, `message/`, `codec/`, `type/`, and `transport/` abbreviate directories under `src/main/java/com/gizmodata/quack/jdbc/`. Original finding line numbers refer to the reviewed baseline; subsequent edits may shift them. Keep the original evidence alongside resolution notes.
 
@@ -17,7 +17,7 @@ Use these IDs in requests, changes, tests, and follow-up discussions, for exampl
 | C | C1-C4 | Native-parity observations requiring a compatibility decision before changes |
 | I | I1-I9 | Build, testing, and engineering improvements |
 | S | S1-S8 | Strengths to preserve, not implementation tasks |
-| V | V1-V20 | Verification evidence and limitations, not implementation tasks |
+| V | V1-V21 | Verification evidence and limitations, not implementation tasks |
 
 IDs are permanent and independent of severity, priority rank, and document order. B1-B40 match the original full report's numbered findings, not the shorter chat summary's numbering. Never renumber or reuse an ID; record resolution under the existing item and append new IDs for new findings. If an item needs separate work units, retain its parent ID and introduce suffixes such as B4a and B4b.
 
@@ -229,7 +229,7 @@ Location: `sql/QuackResultSetMetaData.java:62-77`.
 
 LIST/ARRAY claim List but return QuackArray; STRUCT claims Map but returns QuackStruct; MAP claims List but returns LinkedHashMap; UTINYINT claims Integer but returns Short. A consumer using getColumnClassName to interpret getObject can fail. Match actual supported wrappers/scalars. TIME_TZ also claims LocalTime while decoding a packed Long; a proper OffsetTime representation remains separate work. Confirmed live and compared with native JDBC.
 
-**Partial follow-up (2026-09-05):** B3 corrected the numeric class metadata, including UTINYINT. The nested and TIME_TZ mismatches remain open under B23.
+**Resolution (2026-09-06): resolved.** B3 previously corrected numeric class metadata. LIST/ARRAY now report QuackArray, STRUCT (including tuples) reports QuackStruct, MAP reports LinkedHashMap, and TIME_TZ reports Long, matching existing getObject values. No returned representation, wire handling, or recursive wrapping was changed; TIMETZ remains a packed Long rather than a newly introduced OffsetTime. Two stock-server matrices compare declared and actual classes before iteration and across null/non-null/null rows, including unchanged scalar types. The test fixture uses VALUES because stock DuckDB does not support CASE on fixed arrays; no assertions or types were weakened. Independent review found no B23 issues.
 
 ### B24. Column name normalization can return the wrong column [P2]
 
@@ -631,6 +631,23 @@ QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn 
 ```
 
 Both builds passed **386 tests, zero failures/errors, and two existing networking-environment skips**. All integration suites ran against stock DuckDB 1.5.5 / signed core Quack c154811 with unsigned loading and unsafe crypto disabled. The CI report gate accepted **13/13 integration classes, 38 reports**. Independent rollback review found no remaining custom capability code or regression in the preserved fixes. No custom feature was pushed or published, and it is no longer a release prerequisite. B15 remains a documented protocol limitation; supporting a new server capability would require a separate, clearly described feature proposal.
+
+### V21. Bounded client-only pass: I2, B26, B24, B23
+
+Scope was limited to same-revision snapshot gating, existing slice/stream contracts, column-label lookup, and class metadata. No server feature, extension, protocol field, or new value representation was added. I2, B26, B24, and B23 are separate commits.
+
+I2's static validation covered 28 event/dependency routes, exact-SHA checkout, removal of the independent publisher, deploy-script syntax, and the current Maven version guard. Independent workflow review found no bypass. The hosted workflow and actual publication still require a subsequent requested push; no deployment was performed in this pass.
+
+B26 adds 198 parameterized range/stream checks plus a stock-server round trip. B24 adds 61 lookup checks plus a stock-server distinct-label/duplicate regression. B23 adds two stock-server class-metadata matrices. A B23 test initially used unsupported CASE/fixed-array syntax; switching that fixture to VALUES preserved the fixed-array type and all original assertions. Independent code reviews found no actionable issues in these three driver changes.
+
+Full verification on Java 17.0.2 and Java 21.0.2:
+
+```bash
+QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb JAVA_HOME=/home/jayson/.local/share/mise/installs/java/17.0.2 mvn --batch-mode --no-transfer-progress -Poracle -Dquack.it.required=true clean verify
+QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn --batch-mode --no-transfer-progress -Poracle -Dquack.it.required=true clean verify
+```
+
+Both builds: **649 tests, zero failures/errors, two existing networking-environment skips**. All integration tests used stock DuckDB 1.5.5 and signed core Quack c154811. The exact CI report gate accepted **14/14 integration classes and 41 reports**. Logs are `/tmp/opencode/quack-top4-java17-20260906.log` and `/tmp/opencode/quack-top4-java21-20260906.log`. Unrelated CLAUDE.md and DUCKDB_COMPATIBILITY.md changes remain untouched. No push, snapshot, or stable release was performed.
 
 ## Top Five Priorities
 

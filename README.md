@@ -357,6 +357,9 @@ GizmoData roadmap.
   The wire layer and nested values use `java.util.List`; named STRUCTs retain
   their field-name maps. APPEND accepts exact-length lists for unnamed STRUCTs
   and maps for named STRUCTs. Top-level tuples still return `java.sql.Struct`.
+- `getColumnClassName` describes the existing returned classes: `QuackArray`,
+  `QuackStruct`, `LinkedHashMap`, and `Long` for packed TIMETZ values. This does
+  not introduce recursive nested wrapping or an OffsetTime representation.
 - Prepared-statement parameters use client-side literal substitution.
   Native parameter binding will follow once the Quack protocol surfaces
   bind parameters (`PREPARE_REQUEST` currently carries only the SQL text).

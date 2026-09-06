@@ -68,13 +68,15 @@ public final class QuackResultSetMetaData implements ResultSetMetaData {
             case VARCHAR, CHAR, ENUM -> String.class.getName();
             case BLOB, BIT, GEOMETRY -> byte[].class.getName();
             case DATE -> java.time.LocalDate.class.getName();
-            case TIME, TIME_NS, TIME_TZ -> java.time.LocalTime.class.getName();
+            case TIME, TIME_NS -> java.time.LocalTime.class.getName();
+            case TIME_TZ -> Long.class.getName();
             case TIMESTAMP, TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP_NS -> java.time.LocalDateTime.class.getName();
             case TIMESTAMP_TZ -> java.time.OffsetDateTime.class.getName();
             case UUID -> java.util.UUID.class.getName();
             case INTERVAL -> com.gizmodata.quack.jdbc.message.IntervalValue.class.getName();
-            case STRUCT -> java.util.Map.class.getName();
-            case LIST, MAP, ARRAY -> java.util.List.class.getName();
+            case STRUCT -> QuackStruct.class.getName();
+            case LIST, ARRAY -> QuackArray.class.getName();
+            case MAP -> java.util.LinkedHashMap.class.getName();
             default -> Object.class.getName();
         };
     }

@@ -8,6 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **B23:** Column class metadata now matches existing Array/Struct/Map wrappers
+  and packed TIMETZ Long values, without changing returned representations.
 - **B24:** Column-label lookup is locale-independent and avoids multi-character
   case expansion, preserving distinct labels and JDBC's first matching column.
 - **B26:** Array/Blob ranges and stream lengths are checked before integer
