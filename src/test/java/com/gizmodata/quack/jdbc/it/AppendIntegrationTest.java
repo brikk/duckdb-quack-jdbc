@@ -25,6 +25,9 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -61,6 +64,48 @@ public class AppendIntegrationTest {
 
     private QuackConnection connect() throws SQLException {
         return (QuackConnection) DriverManager.getConnection(server.jdbcUrl());
+    }
+
+    @Test
+    void appendTimestampEndpointsStayFiniteAndOverflowWritesNothing() throws Exception {
+        for (LogicalTypeId id : new LogicalTypeId[]{LogicalTypeId.TIMESTAMP, LogicalTypeId.TIMESTAMP_NS, LogicalTypeId.TIMESTAMP_TZ}) {
+            LogicalType type = LogicalType.of(id);
+            long units = id == LogicalTypeId.TIMESTAMP_NS ? 1_000_000_000L : 1_000_000L;
+            String sqlType = id == LogicalTypeId.TIMESTAMP_TZ ? "TIMESTAMPTZ" : id.name();
+            String epoch = id == LogicalTypeId.TIMESTAMP_NS ? "epoch_ns" : "epoch_us";
+            long[] raw = {Long.MIN_VALUE, Long.MIN_VALUE + 2, 0, Long.MAX_VALUE - 1};
+            Object[] values = new Object[raw.length];
+            for (int i = 0; i < raw.length; i++) {
+                Instant instant = Instant.ofEpochSecond(Math.floorDiv(raw[i], units),
+                        Math.floorMod(raw[i], units) * (1_000_000_000L / units));
+                values[i] = id == LogicalTypeId.TIMESTAMP_TZ ? OffsetDateTime.ofInstant(instant, ZoneOffset.UTC)
+                        : LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
+            }
+            try (QuackConnection c = connect(); Statement s = c.createStatement()) {
+                s.execute("CREATE TEMP TABLE timestamp_boundaries (v " + sqlType + ")");
+                Instant overflow = Instant.ofEpochSecond(Math.floorDiv(Long.MAX_VALUE, units),
+                        Math.floorMod(Long.MAX_VALUE, units) * (1_000_000_000L / units)).plusSeconds(1);
+                Object invalid = id == LogicalTypeId.TIMESTAMP_TZ ? OffsetDateTime.ofInstant(overflow, ZoneOffset.UTC)
+                        : LocalDateTime.ofInstant(overflow, ZoneOffset.UTC);
+                assertThrows(QuackProtocolException.class, () -> c.session().appendChunk("main", "timestamp_boundaries",
+                        new DataChunk(2, List.of(type), List.of(new DecodedVector.ObjectVec(type, new Object[]{values[2], invalid})))));
+                try (ResultSet rs = s.executeQuery("SELECT count(*) FROM timestamp_boundaries")) {
+                    assertTrue(rs.next());
+                    assertEquals(0, rs.getInt(1));
+                }
+                c.session().appendChunk("main", "timestamp_boundaries", new DataChunk(values.length, List.of(type),
+                        List.of(new DecodedVector.ObjectVec(type, values))));
+                try (ResultSet rs = s.executeQuery("SELECT " + epoch + "(v), isfinite(v), v IS NULL FROM timestamp_boundaries ORDER BY " + epoch + "(v)")) {
+                    for (long expected : raw) {
+                        assertTrue(rs.next());
+                        assertEquals(expected, rs.getLong(1));
+                        assertTrue(rs.getBoolean(2));
+                        assertFalse(rs.getBoolean(3));
+                    }
+                    assertFalse(rs.next());
+                }
+            }
+        }
     }
 
     @Test

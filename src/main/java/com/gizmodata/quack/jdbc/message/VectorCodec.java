@@ -976,22 +976,33 @@ public final class VectorCodec {
         return switch (type.id()) {
             case TIME -> ((LocalTime) value).toNanoOfDay() / 1_000L;
             case TIME_NS -> ((LocalTime) value).toNanoOfDay();
-            case TIMESTAMP_SEC -> ((LocalDateTime) value).toEpochSecond(ZoneOffset.UTC);
-            case TIMESTAMP_MS -> ((LocalDateTime) value).toInstant(ZoneOffset.UTC).toEpochMilli();
-            case TIMESTAMP -> instantToMicros(((LocalDateTime) value).toInstant(ZoneOffset.UTC));
-            case TIMESTAMP_NS -> {
-                Instant inst = ((LocalDateTime) value).toInstant(ZoneOffset.UTC);
-                yield Math.multiplyExact(inst.getEpochSecond(), 1_000_000_000L) + inst.getNano();
-            }
-            case TIMESTAMP_TZ -> instantToMicros(((OffsetDateTime) value).toInstant());
+            case TIMESTAMP_SEC -> instantToTimestamp(((LocalDateTime) value).toInstant(ZoneOffset.UTC), 1, type);
+            case TIMESTAMP_MS -> instantToTimestamp(((LocalDateTime) value).toInstant(ZoneOffset.UTC), 1_000, type);
+            case TIMESTAMP -> instantToTimestamp(((LocalDateTime) value).toInstant(ZoneOffset.UTC), 1_000_000, type);
+            case TIMESTAMP_NS -> instantToTimestamp(((LocalDateTime) value).toInstant(ZoneOffset.UTC), 1_000_000_000, type);
+            case TIMESTAMP_TZ -> instantToTimestamp(((OffsetDateTime) value).toInstant(), 1_000_000, type);
             case TIME_TZ -> ((Number) value).longValue();
             case DECIMAL -> decimalUnscaled(type, value).longValueExact();
             default -> ((Number) value).longValue();
         };
     }
 
-    private static long instantToMicros(Instant inst) {
-        return Math.multiplyExact(inst.getEpochSecond(), 1_000_000L) + inst.getNano() / 1_000L;
+    private static long instantToTimestamp(Instant instant, long unitsPerSecond, LogicalType type) {
+        long raw;
+        try {
+            long seconds = instant.getEpochSecond();
+            long fraction = instant.getNano() / (1_000_000_000L / unitsPerSecond);
+            // At negative endpoints the fractional second can rescue an overflowing product.
+            raw = seconds < 0
+                    ? Math.addExact(Math.multiplyExact(seconds + 1, unitsPerSecond), fraction - unitsPerSecond)
+                    : Math.addExact(Math.multiplyExact(seconds, unitsPerSecond), fraction);
+        } catch (ArithmeticException e) {
+            throw new QuackProtocolException("Timestamp is out of range for " + type.id(), e);
+        }
+        if (raw == -Long.MAX_VALUE || raw == Long.MAX_VALUE) {
+            throw new QuackProtocolException("Timestamp encodes an infinity sentinel for " + type.id());
+        }
+        return raw;
     }
 
     private static int encodeEnumOrInt(LogicalType type, Object value, int defaultValue) {

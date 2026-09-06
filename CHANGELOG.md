@@ -69,6 +69,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `BatchUpdateException`, never success for unattempted commands. Original
   SQL state, vendor code, and cause are retained. Prepared batches also reject
   execution after statement closure, including empty batches.
+- **B29:** Timestamp APPEND uses checked final-unit conversion for seconds,
+  milliseconds, microseconds, nanoseconds, and zoned instants. Negative-boundary
+  cancellation is preserved; overflow and infinity-sentinel collisions are
+  rejected without changing fractional truncation or finite signed-min values.
 
 Review IDs and verification details are recorded in [CODE_REVIEW.md](CODE_REVIEW.md).
 Other findings remain open; the review records current resolution status.

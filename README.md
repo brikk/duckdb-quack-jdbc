@@ -364,6 +364,10 @@ GizmoData roadmap.
 
 ### Calendar-aware temporal values
 
+Timestamp APPEND checks the final wire-unit value rather than an intermediate
+seconds product. It rejects overflow and infinity-sentinel collisions while
+preserving finite signed-min payloads and existing sub-unit truncation.
+
 The `Calendar` overloads of `getDate`, `getTime`, `getTimestamp`, `setDate`,
 `setTime`, and `setTimestamp` use the supplied timezone for supported temporal
 conversions. Zone-less timestamps are interpreted in that timezone on reads;
