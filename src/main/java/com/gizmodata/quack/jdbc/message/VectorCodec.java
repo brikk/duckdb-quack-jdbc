@@ -74,12 +74,10 @@ public final class VectorCodec {
             if (count < 0) throw new QuackProtocolException("Negative vector row count");
             int vectorTypeId = reader.readOptionalField(90, reader::readUlebInt, VectorType.FLAT.wireId());
             VectorType vectorType = VectorType.fromWireId(vectorTypeId);
-            PhysicalType physical = PhysicalTypeUtil.getPhysicalType(type);
-            // Covers arrays, masks, selections and scalar conversion objects. Nested containers
-            // and variable-length bytes are charged separately; projections only copy references.
-            int perRow = (vectorType == VectorType.FLAT || vectorType == VectorType.SEQUENCE)
-                    && needsObjectMaterialization(type, physical) ? 1024 : 32;
-            reader.reserve(128L + (long) perRow * count);
+            PhysicalTypeUtil.getPhysicalType(type); // Validate metadata for every encoding, including SEQUENCE.
+            // Arrays, masks, selections and wrappers are charged even for nulls and projections.
+            // Scalar conversions and nested containers are charged where they materialize.
+            reader.reserve(128L + 32L * count);
             DecodedVector result = switch (vectorType) {
                 case FLAT -> decodeFlatVector(reader, type, count);
                 case FSST -> throw new QuackUnsupportedTypeException(
@@ -114,6 +112,10 @@ public final class VectorCodec {
     private static DecodedVector decodeSequence(BinaryReader reader, LogicalType type, int count) {
         long start = reader.readRequiredField(91, reader::readSlebLong);
         long increment = reader.readRequiredField(92, reader::readSlebLong);
+        if (type.id() != LogicalTypeId.INTEGER && type.id() != LogicalTypeId.BIGINT) {
+            // SEQUENCE converts int64 values, even for wide DECIMAL; it has no validity mask.
+            reader.reserve((long) scalarAllocation(type, PhysicalType.INT64) * count);
+        }
         return sequenceTyped(type, count, start, increment);
     }
 
@@ -454,8 +456,10 @@ public final class VectorCodec {
         if (needsObjectMaterialization(type, physicalType)) {
             Object[] values = new Object[count];
             int width = physicalType.byteWidth();
+            int scalarBytes = scalarAllocation(type, physicalType);
             for (int i = 0; i < count; i++) {
                 if (Validity.isValid(validity, i)) {
+                    reader.reserve(scalarBytes);
                     values[i] = decodeFixedValue(reader, type, physicalType);
                 } else {
                     // Null payloads may be invalid logical values; consume only their raw bytes.
@@ -523,6 +527,21 @@ public final class VectorCodec {
         };
         reader.assertEof();
         return vec;
+    }
+
+    /** Conservative cumulative allowances, including conversion temporaries, excluding vector storage. */
+    private static int scalarAllocation(LogicalType type, PhysicalType physical) {
+        if (physical == PhysicalType.INT128) {
+            return type.id() == LogicalTypeId.UUID ? 32 : type.id() == LogicalTypeId.DECIMAL ? 640 : 576;
+        }
+        if (physical == PhysicalType.UINT128) return 768;
+        return switch (type.id()) {
+            case DECIMAL -> 160;
+            case UBIGINT -> 512;
+            case ENUM -> physical == PhysicalType.INT64 ? 32 : 64;
+            case TIMESTAMP, TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP_NS, TIMESTAMP_TZ -> 384;
+            default -> 32;
+        };
     }
 
     /**

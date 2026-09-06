@@ -83,6 +83,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   BIGNUM metadata reports OTHER, not VARCHAR. Null/empty values, textual aliases,
   and supported raw binary representations are preserved; cast BIGNUM to VARCHAR
   in SQL when decimal text is needed.
+- **B41 / QK01-QK02:** Decode allocation accounting now charges type-specific
+  conversion costs only for materialized non-null scalars. This restores wide
+  decimal/array and temporal queries under the unchanged default limits, while
+  retaining shared budgets, structural expansion charges, and malformed-input
+  guards. CONSTANT/DICTIONARY sources are charged once, not per projected row.
 
 Review IDs and verification details are recorded in [CODE_REVIEW.md](CODE_REVIEW.md).
 Other findings remain open; the review records current resolution status.

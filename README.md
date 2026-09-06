@@ -165,7 +165,11 @@ from unchecked lengths. Bodies close on failure and are not replayed.
 
 `maxDecodedBytes` is conservative accounting for arrays, scalar objects,
 strings, nested containers, and intermediate allocations, not an exact JVM
-heap measurement. Valid but very large messages may exceed these defaults.
+heap measurement. Fixed-width scalar conversion costs are type-specific and
+charged only for non-null materializations; array storage is charged for every
+row. Compressed projections charge their source values once, and SEQUENCE
+charges its actual int64 conversion path. Valid but very large messages may
+still exceed these defaults.
 Tune both byte limits for the available heap and concurrent connections;
 HTTP buffering/copies and application-retained results use additional memory.
 These are per-message limits, not a process-wide memory cap. They do not fix

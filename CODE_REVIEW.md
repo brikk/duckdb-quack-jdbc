@@ -2,7 +2,7 @@
 
 Reviewed 2026-09-05 at `/home/jayson/DEV/brikk/fork-quack-jdbc`, version `0.7.0-SNAPSHOT`.
 
-This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Approved implementation passes resolve B1-B12, B18, B19, B29-B32, B39, and B40; resolution notes and V5-V17 record the scope and verification. Earlier fixes were committed as af771d2, followed by B8 as 5f366ac, B11 as 3104d54, B7 as 974f8d3, B12/B32 as afa7d03, B39 as 983687d, B40 as 68c7bfb, B19 as 7d20147, B18 as 592a4ac, B29 as a4633bc, and B30 as 18bd892. B31 is the next separate fix. Existing changes to `CLAUDE.md` and `DUCKDB_COMPATIBILITY.md` were preserved.
+This reviews the original `0.7.0-SNAPSHOT` implementation, including inherited code, not only changes introduced by the fork. The report was subsequently moved into `CODE_REVIEW.md` and given stable identifiers. Implementation passes resolve B1-B12, B18, B19, B29-B32, B39, B40, and B41; resolution notes and V5-V18 record the scope and verification. Earlier fixes were committed as af771d2, followed by B8 as 5f366ac, B11 as 3104d54, B7 as 974f8d3, B12/B32 as afa7d03, B39 as 983687d, B40 as 68c7bfb, B19 as 7d20147, B18 as 592a4ac, B29 as a4633bc, B30 as 18bd892, and B31 as a7d38cd. B41 records the subsequent QK01/QK02 default-budget correction, not a fix present in published snapshot build 10. Existing changes to `CLAUDE.md` and `DUCKDB_COMPATIBILITY.md` were preserved.
 
 All source references below are relative to the repository root. `sql/`, `message/`, `codec/`, `type/`, and `transport/` abbreviate directories under `src/main/java/com/gizmodata/quack/jdbc/`. Original finding line numbers refer to the reviewed baseline; subsequent edits may shift them. Keep the original evidence alongside resolution notes.
 
@@ -12,12 +12,12 @@ Use these IDs in requests, changes, tests, and follow-up discussions, for exampl
 
 | Prefix | IDs | Meaning |
 | --- | --- | --- |
-| B | B1-B40 | Prioritized correctness findings |
+| B | B1-B41 | Prioritized correctness findings |
 | L | L1-L6 | Lower-priority issues, cleanup, and operational tradeoffs |
 | C | C1-C4 | Native-parity observations requiring a compatibility decision before changes |
 | I | I1-I9 | Build, testing, and engineering improvements |
 | S | S1-S8 | Strengths to preserve, not implementation tasks |
-| V | V1-V17 | Verification evidence and limitations, not implementation tasks |
+| V | V1-V18 | Verification evidence and limitations, not implementation tasks |
 
 IDs are permanent and independent of severity, priority rank, and document order. B1-B40 match the original full report's numbered findings, not the shorter chat summary's numbering. Never renumber or reuse an ID; record resolution under the existing item and append new IDs for new findings. If an item needs separate work units, retain its parent ID and introduce suffixes such as B4a and B4b.
 
@@ -140,6 +140,16 @@ List lengths directly become allocation capacities, bounds checks use overflowin
 **Resolution (2026-09-05): resolved with B32.** DecodeLimits defaults to 64 MiB response bodies, 256 MiB decoded allocation accounting, and 64 active nesting frames. BinaryReader uses remaining-length checks and shares allocation/depth state across payload subreaders. Metadata objects, collections, strings, vector materialization, compressed expansion, and nested slices consume the same per-message budget before allocation. Wire objects and inline CONSTANT/DICTIONARY recursion both enforce depth. Limits are configurable through connection properties and additive low-level overloads; existing signatures retain defaults.
 
 The HTTP transport incrementally reads bounded bodies, rejects oversized declared lengths early, checks actual bytes even without a length, and closes bodies on all paths. Body read/size/close/decode failures cannot replay the POST through address fallback. These limits are conservative accounting, not measured JVM heap or a global concurrency/retained-result cap; valid oversized messages may require tuning. Outbound application-generated data is not budgeted. B13/B14 deadlines and cancellation remain open. See README and V10.
+
+**Compatibility follow-up:** Downstream QK01/QK02 later exposed overly conservative fixed-scalar charges under these defaults. B41/V18 corrects the accounting without raising limits or removing the B12 safeguards.
+
+### B41. Default scalar allocation accounting rejects ordinary wide results [P1]
+
+Downstream IDs: **QK01 and QK02**. Introduced by B12 in `message/VectorCodec.java`, not present in the original review baseline. Published `0.7.0-20260906.014938-10` charges 1,024 bytes for every fixed-object FLAT/SEQUENCE slot, including nulls. With the default 12-chunk fetch batch, a valid 65,537-row projection of four DECIMAL widths plus fixed arrays exceeds the 256 MiB cumulative budget before returning a ResultSet. Downstream comparison confirms QK01 passes on 0.6.0. Two wide null/mixed-temporal queries also exhaust the snapshot budget, but fail on 0.6.0 for the older null-decoding defect, so QK02 is not classified as two additional compatibility regressions.
+
+**Resolution (2026-09-06): corrected in the candidate, with default limits unchanged.** Structural vector allowances remain 128 + 32 bytes per row. Non-null FLAT scalar conversions reserve type-specific cumulative costs immediately before conversion; masked null slots reserve no nonexistent scalar object. SEQUENCE precharges its actual int64 conversion path, including the cheaper long-based wide-DECIMAL conversion. CONSTANT/DICTIONARY continue to charge structural projection storage and all materialized source entries, without charging referenced scalar objects repeatedly. Shared per-message accounting, no-refund semantics, wire/depth limits, checked shapes/arithmetic, nested-container charges, and variable-width charges are preserved.
+
+Scalar allowances include bounded conversion temporaries: 32 bytes for simple date/time/packed-time/UUID/INTERVAL objects, 64 for FLAT ENUM lookup, 160 for long-based DECIMAL, 640 for INT128 DECIMAL, 512 for UBIGINT, 576 for signed INT128, 768 for unsigned INT128, and 384 for timestamps. These are conservative policy estimates informed by JDK 17/21 allocation probes with compressed and uncompressed references, not portable JVM heap guarantees. See V18 for exact reproductions and candidate qualification. The already-published build 10 remains affected until replaced.
 
 ## Additional Correctness Findings
 
@@ -400,7 +410,7 @@ Probe artifacts are under `/tmp/opencode/quack-statement-audit/`, `/tmp/opencode
 
 ### V3. Verification limits
 
-The original review did not execute publication workflows or contact production servers, and no DBeaver UI compatibility certification is implied. V1-V2 describe that review. V5-V17 separately record approved implementation passes; they do not constitute verification of every remaining open finding. User-requested pushes trigger the repository's normal CI and snapshot workflows.
+The original review did not execute publication workflows or contact production servers, and no DBeaver UI compatibility certification is implied. V1-V2 describe that review. V5-V18 separately record implementation passes; they do not constitute verification of every remaining open finding. User-requested pushes trigger the repository's normal CI and snapshot workflows.
 
 ### V4. Workspace preservation
 
@@ -570,6 +580,27 @@ Both builds: BUILD SUCCESS; 316 tests, zero failures/errors, two existing networ
 
 The user requested a published snapshot and Duckbridge's full suite through Quack before deciding on a stable release. Local success is not downstream certification. Outstanding P2 execution/lifecycle, typed-binding, conversion, and metadata findings and CI gates I1-I3 still require consideration; no stable tag is authorized by this verification record alone.
 
+### V18. QK01/QK02 accounting correction and supplementary qualification
+
+The exact supplementary source and original failure report were recovered from `/tmp/opencode/duckbridge-quack07/supplemental/SupplementalProbe.java` and `REPORT.md`. The shared Duckbridge report path contained the earlier 703-pass connector-suite report instead; it was not overwritten by this fix. The original three failing SQL projections are now permanent `DecodeBudgetIntegrationTest` cases, with no limit overrides, the default 12-chunk batch asserted, complete 65,537-row value/null checks, and actual FETCH counters. All three reproduced the budget error before the fix, then passed on both JDK 17 and 21 with a 128 MiB test heap.
+
+`VectorValidationTest` adds three accounting matrices covering type costs, poisoned null slots, 0/63/64/65-row validity masks, exact-budget and one-byte-short boundaries, SEQUENCE conversion costs, compressed-source identity, and charging unused dictionary entries. Existing shared-budget, malformed-input, overflow, recursion, and bounded-subprocess checks remain green. Independent review found no actionable issues in the scoped correction.
+
+Full verification commands:
+
+```bash
+QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb JAVA_HOME=/home/jayson/.local/share/mise/installs/java/17.0.2 mvn --batch-mode --no-transfer-progress -Poracle clean verify
+QUACK_IT_DUCKDB=/home/jayson/.local/share/mise/installs/duckdb/1.5.5/duckdb mvn --batch-mode --no-transfer-progress -Poracle clean verify
+```
+
+Both builds: BUILD SUCCESS; **322 tests, zero failures/errors, two existing networking-environment skips**. All integration suites ran on DuckDB 1.5.5 / native oracle 1.5.5.0. The focused three-case integration run also passed with `-DargLine=-Xmx128m` on each JDK, without changing decoder limits.
+
+The **unchanged 36-case supplementary probe** was then executed against the locally built candidate JAR, not the published snapshot, using `/tmp/opencode/quack-budget-verify.sh`. It used the same pinned container image `sha256:d145f010fb4c52df33ef5fdb3068e276f6d96a6882ac63b3faf1dc7190972f47`, JDK 25 with `-Xmx512m`, signed DuckDB 1.5.5 / Quack `c154811`, two server threads, and default 12-chunk fetching. Result: **36 passed, 0 failed, 0 skipped; 11,403,812 assertions; 983,058 checked stream rows; 48 FETCH requests**. The isolated container was removed afterward. Logs and matrix are `qk-budget-candidate-20260906*` in the original supplementary directory; original reports/logs were preserved.
+
+Tested candidate JAR SHA-256: `44e51cd37db67bb42fb34ed4f4149bf819c895b157b595de36a156b2adcdbbcf`. Unchanged probe source SHA-256: `f20ae3eb24b6d4d1b2d3a6943d8ee2360c93db7f631448e1398f293baa306b21`.
+
+This does not requalify published build 10 or rerun the full connector suites. The separate T01-T08 connector wrong-row findings remain outside this correction. Actual HTTPS, live Doris FE/BE, soak testing, and remaining JDBC findings are not declared resolved. A replacement published artifact still needs identity-verified downstream revalidation before a stable-release decision.
+
 ## Top Five Priorities
 
 This is the original approved implementation order, now completed as recorded under each ID and V5. It is retained for traceability, not presented as five outstanding tasks. The ranking prioritized security exposure and the risk of silently persisting incorrect data or violating rollback expectations, not ease of implementation. Original complexity estimates included a complete fix and targeted regression tests; they were not elapsed-time commitments. Low meant localized conversion/validation work, Medium coordinated paths and a boundary-test matrix, and High substantial semantic or API-design risk.
@@ -582,4 +613,4 @@ This is the original approved implementation order, now completed as recorded un
 | 4 | B10 | Select and validate the URL catalog | Low-Medium | Unqualified writes can reach the wrong database. Initialize the server catalog before caching it, handle failed initialization cleanup, and test attached, nonexistent, and quoted catalog names. |
 | 5 | B4 | Preserve exact numeric conversions | Low-Medium | Affects common BIGINT/DECIMAL reads and decimal writes. Remove floating-point and long intermediates for exact values; test large positive/negative integers, scales, and typed BigInteger retrieval. |
 
-These ranks do not change any finding's ID. Approved follow-ups have also resolved B6 and B2+B3 (V6), B8 (V7), B11 (V8), B7 (V9), B12/B32 (V10), B39 (V11), B40 (V12), B19 (V13), B18 (V14), and B29-B31 (V15-V17). All original P1 findings are resolved. The next recommended correctness pass is B15/B16/B22 (execution/result state), followed by resource ownership and deadlines. Use I4-I6 alongside fixes and promote verification into CI (I1-I3). C items still require compatibility decisions; cleanup and performance remain tracked by L1-L6 and I7-I9. Downstream snapshot validation is the next release-assessment step.
+These ranks do not change any finding's ID. Follow-ups have resolved B6 and B2+B3 (V6), B8 (V7), B11 (V8), B7 (V9), B12/B32 (V10), B39 (V11), B40 (V12), B19 (V13), B18 (V14), and B29-B31 (V15-V17). B41/V18 corrects the subsequently discovered default-budget regression in the candidate. A replacement snapshot needs downstream revalidation; the previously published build remains affected. The next recommended correctness pass is B15/B16/B22 (execution/result state), followed by resource ownership and deadlines. Use I4-I6 alongside fixes and promote verification into CI (I1-I3). C items still require compatibility decisions; cleanup and performance remain tracked by L1-L6 and I7-I9.
