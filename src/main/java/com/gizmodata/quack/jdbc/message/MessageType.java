@@ -13,6 +13,9 @@ public enum MessageType {
     APPEND_REQUEST(9),
     SUCCESS_RESPONSE(10),
     DISCONNECT_MESSAGE(11),
+    HEARTBEAT_REQUEST(16),
+    SEND_DATA_REQUEST(9),
+    SEND_DATA_RESPONSE(14),
     ERROR_RESPONSE(100);
 
     private final int wireId;
@@ -32,5 +35,10 @@ public enum MessageType {
             }
         }
         throw new QuackProtocolException("Unknown message type id " + wireId);
+    }
+
+    public static MessageType fromWireId(int wireId, long protocolVersion) {
+        if (wireId == 9 && protocolVersion == 3) return SEND_DATA_REQUEST;
+        return fromWireId(wireId);
     }
 }

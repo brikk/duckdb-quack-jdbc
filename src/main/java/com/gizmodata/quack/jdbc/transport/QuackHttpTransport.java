@@ -54,6 +54,7 @@ public final class QuackHttpTransport implements QuackTransport {
     private final Duration requestTimeout;
     private final Map<String, String> extraHeaders;
     private final DecodeLimits decodeLimits;
+    private volatile long protocolVersion = QuackConstants.QUACK_VERSION;
 
     public QuackHttpTransport(URI endpoint) {
         this(endpoint, HttpClient.newBuilder()
@@ -97,8 +98,13 @@ public final class QuackHttpTransport implements QuackTransport {
     }
 
     @Override
+    public void setProtocolVersion(long version) {
+        protocolVersion = version;
+    }
+
+    @Override
     public QuackMessage send(QuackMessage request) {
-        byte[] body = MessageCodec.encode(request);
+        byte[] body = MessageCodec.encode(request, protocolVersion);
 
         URI[] attempts = endpointCandidates();
         IOException lastFailure = null;
@@ -152,7 +158,8 @@ public final class QuackHttpTransport implements QuackTransport {
                     throw new QuackException("Quack HTTP response exceeds maxResponseBytes limit of "
                             + decodeLimits.maxResponseBytes() + " bytes");
                 }
-                QuackMessage decoded = MessageCodec.decode(readResponseBody(responseBody), decodeLimits);
+                QuackMessage decoded = MessageCodec.decode(readResponseBody(responseBody), decodeLimits,
+                        protocolVersion);
                 if (decoded instanceof QuackMessage.ErrorResponse err) {
                     throw new QuackServerException(err.message());
                 }

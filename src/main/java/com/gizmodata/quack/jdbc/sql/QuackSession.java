@@ -2,6 +2,7 @@ package com.gizmodata.quack.jdbc.sql;
 
 import com.gizmodata.quack.jdbc.QuackException;
 import com.gizmodata.quack.jdbc.QuackProtocolException;
+import com.gizmodata.quack.jdbc.QuackServerException;
 import com.gizmodata.quack.jdbc.codec.HugeIntParts;
 import com.gizmodata.quack.jdbc.codec.QuackConstants;
 import com.gizmodata.quack.jdbc.message.DataChunk;
@@ -21,7 +22,11 @@ import java.util.Deque;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /** Live Quack session: connection id, query-id sequence, and a Quack transport. */
 public final class QuackSession implements AutoCloseable {
@@ -32,6 +37,9 @@ public final class QuackSession implements AutoCloseable {
     private final AtomicLong queryIdSeq = new AtomicLong(1);
     private volatile String connectionId;
     private volatile Optional<String> serverDuckdbVersion = Optional.empty();
+    private volatile long protocolVersion = QuackConstants.QUACK_VERSION;
+    private ScheduledExecutorService heartbeat;
+    private volatile RuntimeException heartbeatFailure;
     private volatile boolean closed;
 
     public QuackSession(QuackUri uri, QuackTransport transport) {
@@ -83,11 +91,41 @@ public final class QuackSession implements AutoCloseable {
         return serverDuckdbVersion;
     }
 
+    public long protocolVersion() {
+        return protocolVersion;
+    }
+
     public boolean isClosed() {
         return closed;
     }
 
     private void handshake() {
+        // A v1 server cannot deserialize the v3-only heartbeat field. Probe with
+        // the shared v1 envelope first; a v3 server explicitly requests a lease.
+        QuackMessage.ConnectionResponse connResp;
+        try {
+            connResp = connectRequest(false);
+        } catch (QuackServerException e) {
+            if (!e.getMessage().contains("heartbeat_timeout out of range")) throw e;
+            connResp = connectRequest(true);
+        }
+        long selected = connResp.quackVersion().orElse(QuackConstants.QUACK_VERSION);
+        if (selected != QuackConstants.QUACK_VERSION && selected != QuackConstants.LATEST_QUACK_VERSION) {
+            throw new QuackProtocolException("Unsupported Quack protocol version " + selected
+                    + " (supported: 1 and 3)");
+        }
+        if (selected == 3 && connResp.heartbeatTimeoutSeconds().orElse(0L) <= 0) {
+            throw new QuackProtocolException("v3 server did not return a heartbeat lease");
+        }
+        this.connectionId = connResp.header().connectionId().orElseThrow(
+                () -> new QuackProtocolException("Server did not return a connection_id"));
+        this.serverDuckdbVersion = connResp.serverDuckdbVersion();
+        this.protocolVersion = selected;
+        transport.setProtocolVersion(selected);
+        if (selected == 3) startHeartbeat(connResp.heartbeatTimeoutSeconds().orElseThrow());
+    }
+
+    private QuackMessage.ConnectionResponse connectRequest(boolean v3) {
         MessageHeader header = MessageHeader.of(MessageType.CONNECTION_REQUEST)
                 .withClientQueryId(nextQueryId());
         QuackMessage.ConnectionRequest request = new QuackMessage.ConnectionRequest(
@@ -96,15 +134,41 @@ public final class QuackSession implements AutoCloseable {
                 Optional.of(DriverVersion.CLIENT_VERSION),
                 Optional.of(System.getProperty("os.name", "unknown")),
                 Optional.of(QuackConstants.QUACK_VERSION),
-                Optional.of(QuackConstants.QUACK_VERSION));
+                Optional.of(QuackConstants.LATEST_QUACK_VERSION),
+                Optional.empty(), v3 ? Optional.of(60L) : Optional.empty());
         QuackMessage response = transport.send(request);
         if (!(response instanceof QuackMessage.ConnectionResponse connResp)) {
             throw new QuackProtocolException(
                     "Expected CONNECTION_RESPONSE, got " + response.getClass().getSimpleName());
         }
-        this.connectionId = connResp.header().connectionId().orElseThrow(
-                () -> new QuackProtocolException("Server did not return a connection_id"));
-        this.serverDuckdbVersion = connResp.serverDuckdbVersion();
+        return connResp;
+    }
+
+    private void startHeartbeat(long leaseSeconds) {
+        long interval = Math.max(1, Math.min(20, leaseSeconds / 3));
+        heartbeat = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread thread = new Thread(r, "quack-heartbeat");
+            thread.setDaemon(true);
+            return thread;
+        });
+        heartbeat.scheduleWithFixedDelay(() -> {
+            if (!closed && heartbeatFailure == null) {
+                try {
+                    QuackMessage response = transport.send(new QuackMessage.HeartbeatRequest(
+                            MessageHeader.of(MessageType.HEARTBEAT_REQUEST)
+                                    .withConnectionId(connectionId).withClientQueryId(nextQueryId())));
+                    if (!(response instanceof QuackMessage.SuccessResponse)) {
+                        heartbeatFailure = new QuackProtocolException("Unexpected heartbeat response: "
+                                + response.getClass().getSimpleName());
+                    }
+                } catch (QuackServerException e) {
+                    heartbeatFailure = e;
+                } catch (RuntimeException e) {
+                    // A transient heartbeat failure does not prove the lease expired;
+                    // the next request or heartbeat will report the server's verdict.
+                }
+            }
+        }, interval, interval, TimeUnit.SECONDS);
     }
 
     /**
@@ -114,6 +178,11 @@ public final class QuackSession implements AutoCloseable {
      * demand as the caller calls {@link Cursor#nextChunk()}.
      */
     public Cursor cursor(String sql) {
+        return cursor(sql, Optional.empty());
+    }
+
+    private Cursor cursor(String sql, Optional<Long> inlineRows) {
+        if (heartbeatFailure != null) throw heartbeatFailure;
         if (closed) {
             throw new QuackProtocolException("Session is closed");
         }
@@ -121,11 +190,15 @@ public final class QuackSession implements AutoCloseable {
                 MessageHeader.of(MessageType.PREPARE_REQUEST)
                         .withConnectionId(connectionId)
                         .withClientQueryId(nextQueryId()),
-                sql);
+                sql, protocolVersion == 3 ? new HugeIntParts(0, nextQueryId()) : new HugeIntParts(0, 0),
+                inlineRows);
         QuackMessage response = transport.send(request);
         if (!(response instanceof QuackMessage.PrepareResponse prep)) {
             throw new QuackProtocolException(
                     "Expected PREPARE_RESPONSE, got " + response.getClass().getSimpleName());
+        }
+        if (protocolVersion == 3 && !prep.resultUuid().equals(request.queryUuid())) {
+            throw new QuackProtocolException("PREPARE returned a different query UUID");
         }
         return new Cursor(this, prep);
     }
@@ -146,6 +219,7 @@ public final class QuackSession implements AutoCloseable {
      * {@code PreparedStatement.executeBatch()}.
      */
     public void appendChunk(String schema, String tableName, DataChunk chunk) {
+        if (heartbeatFailure != null) throw heartbeatFailure;
         if (closed) {
             throw new QuackProtocolException("Session is closed");
         }
@@ -162,6 +236,10 @@ public final class QuackSession implements AutoCloseable {
                 throw new QuackException("Could not start transaction for APPEND", e);
             }
         }
+        if (protocolVersion == 3) {
+            appendV3(schema, tableName, chunk);
+            return;
+        }
         QuackMessage.AppendRequest request = new QuackMessage.AppendRequest(
                 MessageHeader.of(MessageType.APPEND_REQUEST)
                         .withConnectionId(connectionId)
@@ -177,8 +255,60 @@ public final class QuackSession implements AutoCloseable {
         }
     }
 
+    private void appendV3(String schema, String tableName, DataChunk chunk) {
+        if (chunk.rowCount() == 0) return;
+        String target = (schema == null || schema.isEmpty() ? "" : quoteIdentifier(schema) + ".")
+                + quoteIdentifier(tableName);
+        // Derive the prototype from the destination, preserving column order and
+        // names (the DataChunk itself only contains types). Validate before sending.
+        List<String> names;
+        try (Cursor columns = cursor("SELECT * FROM " + target + " LIMIT 0")) {
+            names = columns.columnNames();
+            if (!columns.columnTypes().equals(chunk.types())) {
+                throw new QuackProtocolException("APPEND chunk types do not match " + target);
+            }
+        }
+        if (names.isEmpty()) throw new QuackProtocolException("APPEND requires at least one column");
+        String streamId = UUID.randomUUID().toString();
+        StringBuilder prototype = new StringBuilder("NULL::STRUCT(");
+        for (int i = 0; i < names.size(); i++) {
+            if (i > 0) prototype.append(", ");
+            prototype.append(quoteIdentifier(names.get(i))).append(' ')
+                    .append(JdbcTypeMap.typeName(chunk.types().get(i), true));
+        }
+        prototype.append(')');
+        String sql = "INSERT INTO " + target + " SELECT * FROM scan_data_from_quack_client("
+                + SqlLiteral.render(streamId) + ", " + prototype + ")";
+        // Zero inline rows lets PREPARE return once the stream is bound,
+        // rather than blocking until SEND_DATA has supplied the first batch.
+        try (Cursor result = cursor(sql, Optional.of(0L))) {
+            QuackMessage response = transport.send(new QuackMessage.SendDataRequest(
+                    MessageHeader.of(MessageType.SEND_DATA_REQUEST)
+                            .withConnectionId(connectionId).withClientQueryId(nextQueryId()),
+                    streamId, List.of(chunk), Optional.of(1L), Optional.empty()));
+            if (!(response instanceof QuackMessage.SendDataResponse)) {
+                throw new QuackProtocolException("Expected SEND_DATA_RESPONSE, got "
+                        + response.getClass().getSimpleName());
+            }
+            response = transport.send(new QuackMessage.SendDataRequest(
+                    MessageHeader.of(MessageType.SEND_DATA_REQUEST)
+                            .withConnectionId(connectionId).withClientQueryId(nextQueryId()),
+                    streamId, List.of(), Optional.empty(), Optional.of(1L)));
+            if (!(response instanceof QuackMessage.SendDataResponse)) {
+                throw new QuackProtocolException("Expected terminal SEND_DATA_RESPONSE, got "
+                        + response.getClass().getSimpleName());
+            }
+            result.drainAll(); // surface any late INSERT failure
+        }
+    }
+
+    private static String quoteIdentifier(String name) {
+        return "\"" + name.replace("\"", "\"\"") + "\"";
+    }
+
     @Override
     public synchronized void close() {
+        if (heartbeat != null) heartbeat.shutdownNow();
         if (closed || connectionId == null) {
             closed = true;
             return;
@@ -201,17 +331,35 @@ public final class QuackSession implements AutoCloseable {
     }
 
     private List<DataChunk> fetchMoreChunks(HugeIntParts resultUuid, FetchState state) {
+        if (heartbeatFailure != null) throw heartbeatFailure;
+        long batchIndex = protocolVersion == 3 ? state.nextBatchIndex : 0;
         QuackMessage.FetchRequest fetch = new QuackMessage.FetchRequest(
                 MessageHeader.of(MessageType.FETCH_REQUEST)
                         .withConnectionId(connectionId)
                         .withClientQueryId(nextQueryId()),
-                resultUuid);
+                resultUuid, batchIndex, batchIndex > 1 ? batchIndex - 1 : 0);
         QuackMessage fr = transport.send(fetch);
         if (!(fr instanceof QuackMessage.FetchResponse fetchResp)) {
             throw new QuackProtocolException(
                     "Expected FETCH_RESPONSE, got " + fr.getClass().getSimpleName());
         }
-        state.hasMore = fetchResp.batchIndex().isPresent();
+        if (protocolVersion == 3) {
+            if (fetchResp.batchIndex().isPresent()) {
+                if (fetchResp.batchIndex().get() != batchIndex || fetchResp.totalBatches().isPresent()
+                        || fetchResp.results().isEmpty()) {
+                    throw new QuackProtocolException("Invalid v3 FETCH batch " + batchIndex);
+                }
+                state.nextBatchIndex++;
+            } else {
+                if (!fetchResp.results().isEmpty() || fetchResp.totalBatches().isEmpty()
+                        || fetchResp.totalBatches().get() != batchIndex - 1) {
+                    throw new QuackProtocolException("Invalid v3 FETCH terminal batch count");
+                }
+                state.hasMore = false;
+            }
+        } else {
+            state.hasMore = fetchResp.batchIndex().isPresent();
+        }
         return fetchResp.results();
     }
 
@@ -309,6 +457,7 @@ public final class QuackSession implements AutoCloseable {
 
     private static final class FetchState {
         boolean hasMore;
+        long nextBatchIndex = 1;
 
         FetchState(boolean hasMore) {
             this.hasMore = hasMore;

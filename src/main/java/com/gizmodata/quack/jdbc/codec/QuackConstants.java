@@ -2,6 +2,7 @@ package com.gizmodata.quack.jdbc.codec;
 
 public final class QuackConstants {
     public static final long QUACK_VERSION = 1L;
+    public static final long LATEST_QUACK_VERSION = 3L;
     public static final int DEFAULT_QUACK_PORT = 9494;
     public static final String QUACK_ENDPOINT = "/quack";
     public static final String DUCKDB_MIME_TYPE = "application/duckdb";

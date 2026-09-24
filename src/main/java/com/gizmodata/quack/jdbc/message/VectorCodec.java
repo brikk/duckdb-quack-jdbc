@@ -345,8 +345,34 @@ public final class VectorCodec {
 
         return switch (physicalType) {
             case VARCHAR -> {
-                List<byte[]> raw = reader.readRequiredField(102,
-                        () -> reader.readList(count, i -> reader.readStringBytes()));
+                List<byte[]> raw;
+                if (reader.protocolVersion() == 3) {
+                    long byteCount = reader.readRequiredField(107, reader::readUlebLong);
+                    if (byteCount < 0 || byteCount > Integer.MAX_VALUE) {
+                        throw new QuackProtocolException("Invalid v3 string byte count");
+                    }
+                    byte[] lengths = reader.readRequiredField(108,
+                            () -> reader.readBlob(checkedProduct(4, count)));
+                    byte[] bytes = reader.readRequiredField(109,
+                            () -> reader.readBlob((int) byteCount));
+                    BinaryReader lengthReader = reader.subReader(lengths);
+                    int offset = 0;
+                    raw = new ArrayList<>(count);
+                    reader.reserve(32L + 16L * count);
+                    for (int i = 0; i < count; i++) {
+                        long length = lengthReader.readFixedUint32();
+                        if (length > bytes.length - offset || (!Validity.isValid(validity, i) && length != 0)) {
+                            throw new QuackProtocolException("Invalid v3 string length");
+                        }
+                        reader.reserve(16L + length);
+                        raw.add(java.util.Arrays.copyOfRange(bytes, offset, offset + (int) length));
+                        offset += (int) length;
+                    }
+                    if (offset != bytes.length) throw new QuackProtocolException("Trailing v3 string bytes");
+                } else {
+                    raw = reader.readRequiredField(102,
+                            () -> reader.readList(count, i -> reader.readStringBytes()));
+                }
                 Object[] values = new Object[raw.size()];
                 for (int i = 0; i < raw.size(); i++) {
                     values[i] = Validity.isValid(validity, i) ? decodeStringLikeValue(reader, type, raw.get(i)) : null;
@@ -787,12 +813,28 @@ public final class VectorCodec {
             return;
         }
         switch (physical) {
-            case VARCHAR -> writer.writeField(102, () -> {
-                writer.writeUleb(count);
-                for (int i = 0; i < count; i++) {
-                    writer.writeStringBytes(encodeStringLikeValueForWrite(type, vector.getObject(i)));
+            case VARCHAR -> {
+                if (writer.protocolVersion() == 3) {
+                    BinaryWriter lengths = new BinaryWriter(Math.max(16, checkedProduct(4, count)));
+                    BinaryWriter bytes = new BinaryWriter();
+                    for (int i = 0; i < count; i++) {
+                        byte[] value = vector.isNull(i) ? new byte[0]
+                                : encodeStringLikeValueForWrite(type, vector.getObject(i));
+                        lengths.writeFixedUint32(value.length);
+                        bytes.writeBytes(value);
+                    }
+                    writer.writeField(107, () -> writer.writeUleb(bytes.size()));
+                    writer.writeField(108, () -> writer.writeBlob(lengths.toByteArray()));
+                    writer.writeField(109, () -> writer.writeBlob(bytes.toByteArray()));
+                } else {
+                    writer.writeField(102, () -> {
+                        writer.writeUleb(count);
+                        for (int i = 0; i < count; i++) {
+                            writer.writeStringBytes(encodeStringLikeValueForWrite(type, vector.getObject(i)));
+                        }
+                    });
                 }
-            });
+            }
             case STRUCT -> encodeStructChildren(writer, type, vector, count);
             case LIST -> encodeListChild(writer, type, vector, count);
             case ARRAY -> encodeArrayChild(writer, type, vector, count);

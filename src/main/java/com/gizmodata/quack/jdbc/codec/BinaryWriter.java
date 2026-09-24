@@ -17,14 +17,24 @@ public final class BinaryWriter {
 
     private byte[] buffer;
     private int offset;
+    private final long protocolVersion;
 
     public BinaryWriter() {
         this(1024);
     }
 
     public BinaryWriter(int initialCapacity) {
+        this(initialCapacity, QuackConstants.QUACK_VERSION);
+    }
+
+    public BinaryWriter(int initialCapacity, long protocolVersion) {
         this.buffer = new byte[Math.max(16, initialCapacity)];
         this.offset = 0;
+        this.protocolVersion = protocolVersion;
+    }
+
+    public long protocolVersion() {
+        return protocolVersion;
     }
 
     public int size() {

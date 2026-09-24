@@ -6,4 +6,7 @@ import com.gizmodata.quack.jdbc.message.QuackMessage;
 public interface QuackTransport {
 
     QuackMessage send(QuackMessage request);
+
+    /** Called after the handshake, before any version-dependent requests. */
+    default void setProtocolVersion(long version) { }
 }

@@ -15,14 +15,37 @@ public sealed interface QuackMessage {
                              Optional<String> clientDuckdbVersion,
                              Optional<String> clientPlatform,
                              Optional<Long> minSupportedQuackVersion,
-                             Optional<Long> maxSupportedQuackVersion) implements QuackMessage {}
+                             Optional<Long> maxSupportedQuackVersion,
+                             Optional<String> clientId,
+                             Optional<Long> heartbeatTimeoutSeconds) implements QuackMessage {
+        public ConnectionRequest(MessageHeader header, Optional<String> authString,
+                                 Optional<String> clientDuckdbVersion, Optional<String> clientPlatform,
+                                 Optional<Long> minSupportedQuackVersion, Optional<Long> maxSupportedQuackVersion) {
+            this(header, authString, clientDuckdbVersion, clientPlatform,
+                    minSupportedQuackVersion, maxSupportedQuackVersion, Optional.empty(), Optional.empty());
+        }
+    }
 
     record ConnectionResponse(MessageHeader header,
-                              Optional<String> serverDuckdbVersion,
-                              Optional<String> serverPlatform,
-                              Optional<Long> quackVersion) implements QuackMessage {}
+                               Optional<String> serverDuckdbVersion,
+                               Optional<String> serverPlatform,
+                               Optional<Long> quackVersion,
+                               Optional<Long> heartbeatTimeoutSeconds) implements QuackMessage {
+        public ConnectionResponse(MessageHeader header, Optional<String> serverDuckdbVersion,
+                                  Optional<String> serverPlatform, Optional<Long> quackVersion) {
+            this(header, serverDuckdbVersion, serverPlatform, quackVersion, Optional.empty());
+        }
+    }
 
-    record PrepareRequest(MessageHeader header, String sql) implements QuackMessage {}
+    record PrepareRequest(MessageHeader header, String sql, HugeIntParts queryUuid,
+                          Optional<Long> inlineRows) implements QuackMessage {
+        public PrepareRequest(MessageHeader header, String sql) {
+            this(header, sql, new HugeIntParts(0, 0), Optional.empty());
+        }
+        public PrepareRequest(MessageHeader header, String sql, HugeIntParts queryUuid) {
+            this(header, sql, queryUuid, Optional.empty());
+        }
+    }
 
     record PrepareResponse(MessageHeader header,
                            List<LogicalType> resultTypes,
@@ -31,11 +54,28 @@ public sealed interface QuackMessage {
                            List<DataChunk> results,
                            HugeIntParts resultUuid) implements QuackMessage {}
 
-    record FetchRequest(MessageHeader header, HugeIntParts resultUuid) implements QuackMessage {}
+    record FetchRequest(MessageHeader header, HugeIntParts resultUuid,
+                        long batchIndex, long ackIndex) implements QuackMessage {
+        public FetchRequest(MessageHeader header, HugeIntParts resultUuid) {
+            this(header, resultUuid, 0, 0);
+        }
+    }
 
     record FetchResponse(MessageHeader header,
-                         List<DataChunk> results,
-                         Optional<Long> batchIndex) implements QuackMessage {}
+                          List<DataChunk> results,
+                          Optional<Long> batchIndex,
+                          Optional<Long> totalBatches) implements QuackMessage {
+        public FetchResponse(MessageHeader header, List<DataChunk> results, Optional<Long> batchIndex) {
+            this(header, results, batchIndex, Optional.empty());
+        }
+    }
+
+    record HeartbeatRequest(MessageHeader header) implements QuackMessage {}
+
+    record SendDataRequest(MessageHeader header, String streamId, List<DataChunk> chunks,
+                           Optional<Long> batchIndex, Optional<Long> totalBatches) implements QuackMessage {}
+
+    record SendDataResponse(MessageHeader header, Optional<Long> acceptBudget) implements QuackMessage {}
 
     record AppendRequest(MessageHeader header,
                          Optional<String> schemaName,

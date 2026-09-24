@@ -45,7 +45,7 @@ public final class JdbcTypeMap {
         return typeName(type, false);
     }
 
-    private static String typeName(LogicalType type, boolean nested) {
+    static String typeName(LogicalType type, boolean nested) {
         return switch (type.id()) {
             case BOOLEAN -> "BOOLEAN";
             case TINYINT -> "TINYINT";

@@ -18,6 +18,7 @@ public final class BinaryReader {
 
     private final byte[] bytes;
     private final Budget budget;
+    private final long protocolVersion;
     private int offset;
 
     public BinaryReader(byte[] bytes) {
@@ -25,21 +26,30 @@ public final class BinaryReader {
     }
 
     public BinaryReader(byte[] bytes, DecodeLimits limits) {
-        this(bytes, new Budget(limits));
+        this(bytes, limits, QuackConstants.QUACK_VERSION);
     }
 
-    private BinaryReader(byte[] bytes, Budget budget) {
+    public BinaryReader(byte[] bytes, DecodeLimits limits, long protocolVersion) {
+        this(bytes, new Budget(limits), protocolVersion);
+    }
+
+    private BinaryReader(byte[] bytes, Budget budget, long protocolVersion) {
         if (bytes.length > budget.limits.maxResponseBytes()) {
             throw new QuackProtocolException("Input exceeds maxResponseBytes");
         }
         this.bytes = bytes;
         this.budget = budget;
+        this.protocolVersion = protocolVersion;
+    }
+
+    public long protocolVersion() {
+        return protocolVersion;
     }
 
     /** A payload reader shares the parent message's allocation and active nesting budget. */
     public BinaryReader subReader(byte[] payload) {
         reserve(64);
-        return new BinaryReader(payload, budget);
+        return new BinaryReader(payload, budget, protocolVersion);
     }
 
     /** Reserve before allocating; consumed allowance is not refunded after temporary objects die. */

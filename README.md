@@ -12,10 +12,20 @@ familiar `jdbc:quack://` URL.
 [![GitHub Repo](https://img.shields.io/badge/github-brikk%2Fduckdb--quack--jdbc-181717?logo=github)](https://github.com/brikk/duckdb-quack-jdbc)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **Status:** Experimental / alpha. This driver uses stock Quack protocol v1,
-> tested against DuckDB 1.5.5 and its signed core Quack extension, with native
-> `duckdb_jdbc` 1.5.5.0 as a behavioral oracle. No custom server extension or
-> private protocol capability is required.
+> **Status:** Experimental / alpha. Protocol v1 is tested against DuckDB 1.5.5
+> and its signed core Quack extension, with native `duckdb_jdbc` 1.5.5.0 as a
+> behavioral oracle. The driver also recognizes upstream Quack v3 (development
+> protocol for DuckDB 2.0); v3 support has not yet been verified against a
+> released DuckDB 2.0 server. No custom server extension is required for v1.
+
+The connection handshake selects Quack v1 or v3. A v3 server requires a second
+handshake round trip to supply its heartbeat lease; the driver then sends
+heartbeats while the connection is open. Queries, indexed FETCH responses,
+and bulk `appendChunk` use the selected wire format. A server selecting an
+unsupported version (including v2) fails at connect rather than executing
+SQL with a mismatched message layout. The v3 implementation tracks upstream
+[`duckdb-quack` at `01a256e`](https://github.com/duckdb/duckdb-quack/tree/01a256ed5e357882f22f3b61c8941fd8e20cc481);
+DuckDB 2.0's final extension pin and wire behavior still need release testing.
 
 ## Quickstart
 
