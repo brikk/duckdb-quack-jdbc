@@ -6,6 +6,7 @@ import com.gizmodata.quack.jdbc.QuackServerException;
 import com.gizmodata.quack.jdbc.codec.HugeIntParts;
 import com.gizmodata.quack.jdbc.codec.QuackConstants;
 import com.gizmodata.quack.jdbc.message.DataChunk;
+import com.gizmodata.quack.jdbc.message.DecodedVector;
 import com.gizmodata.quack.jdbc.message.MessageHeader;
 import com.gizmodata.quack.jdbc.message.MessageType;
 import com.gizmodata.quack.jdbc.message.QuackMessage;
@@ -14,12 +15,16 @@ import com.gizmodata.quack.jdbc.transport.QuackTransport;
 import com.gizmodata.quack.jdbc.transport.QuackTransportFactory;
 import com.gizmodata.quack.jdbc.transport.QuackUri;
 import com.gizmodata.quack.jdbc.type.LogicalType;
+import com.gizmodata.quack.jdbc.type.ExtraTypeInfo;
+import com.gizmodata.quack.jdbc.type.LogicalTypeId;
 
 import java.sql.SQLException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
+import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -191,7 +196,10 @@ public final class QuackSession implements AutoCloseable {
                         .withConnectionId(connectionId)
                         .withClientQueryId(nextQueryId()),
                 sql, protocolVersion == 3 ? new HugeIntParts(0, nextQueryId()) : new HugeIntParts(0, 0),
-                inlineRows);
+                // Keep the first batch inline: JDBC needs the initial row to
+                // distinguish DML counts from result sets and surface errors.
+                // v3 counts entire batches, so this is not a strict row cap.
+                protocolVersion == 3 && inlineRows.isEmpty() ? Optional.of(2048L) : inlineRows);
         QuackMessage response = transport.send(request);
         if (!(response instanceof QuackMessage.PrepareResponse prep)) {
             throw new QuackProtocolException(
@@ -262,19 +270,40 @@ public final class QuackSession implements AutoCloseable {
         // Derive the prototype from the destination, preserving column order and
         // names (the DataChunk itself only contains types). Validate before sending.
         List<String> names;
+        List<LogicalType> targetTypes;
         try (Cursor columns = cursor("SELECT * FROM " + target + " LIMIT 0")) {
             names = columns.columnNames();
-            if (!columns.columnTypes().equals(chunk.types())) {
+            targetTypes = columns.columnTypes();
+            if (targetTypes.size() != chunk.types().size()) {
                 throw new QuackProtocolException("APPEND chunk types do not match " + target);
+            }
+            for (int i = 0; i < chunk.types().size(); i++) {
+                if (!appendTypeCompatible(targetTypes.get(i), chunk.types().get(i))) {
+                    throw new QuackProtocolException("APPEND chunk types do not match " + target);
+                }
             }
         }
         if (names.isEmpty()) throw new QuackProtocolException("APPEND requires at least one column");
+        List<DecodedVector> converted = new ArrayList<>(chunk.columns().size());
+        for (int i = 0; i < chunk.columns().size(); i++) {
+            DecodedVector column = chunk.columns().get(i);
+            if (targetTypes.get(i).equals(chunk.types().get(i))) {
+                converted.add(column);
+            } else {
+                Object[] values = new Object[chunk.rowCount()];
+                for (int row = 0; row < values.length; row++) {
+                    values[row] = adaptAppendValue(column.getObject(row), targetTypes.get(i), chunk.types().get(i));
+                }
+                converted.add(new DecodedVector.ObjectVec(targetTypes.get(i), values));
+            }
+        }
+        DataChunk sendChunk = new DataChunk(chunk.rowCount(), targetTypes, converted);
         String streamId = UUID.randomUUID().toString();
         StringBuilder prototype = new StringBuilder("NULL::STRUCT(");
         for (int i = 0; i < names.size(); i++) {
             if (i > 0) prototype.append(", ");
             prototype.append(quoteIdentifier(names.get(i))).append(' ')
-                    .append(JdbcTypeMap.typeName(chunk.types().get(i), true));
+                    .append(JdbcTypeMap.typeName(targetTypes.get(i), true));
         }
         prototype.append(')');
         String sql = "INSERT INTO " + target + " SELECT * FROM scan_data_from_quack_client("
@@ -285,7 +314,7 @@ public final class QuackSession implements AutoCloseable {
             QuackMessage response = transport.send(new QuackMessage.SendDataRequest(
                     MessageHeader.of(MessageType.SEND_DATA_REQUEST)
                             .withConnectionId(connectionId).withClientQueryId(nextQueryId()),
-                    streamId, List.of(chunk), Optional.of(1L), Optional.empty()));
+                    streamId, List.of(sendChunk), Optional.of(1L), Optional.empty()));
             if (!(response instanceof QuackMessage.SendDataResponse)) {
                 throw new QuackProtocolException("Expected SEND_DATA_RESPONSE, got "
                         + response.getClass().getSimpleName());
@@ -300,6 +329,68 @@ public final class QuackSession implements AutoCloseable {
             }
             result.drainAll(); // surface any late INSERT failure
         }
+    }
+
+    private static boolean appendTypeCompatible(LogicalType target, LogicalType source) {
+        if (target.equals(source)) return true;
+        if ((target.id() == LogicalTypeId.STRUCT || target.id() == LogicalTypeId.TUPLE)
+                && (source.id() == LogicalTypeId.STRUCT || source.id() == LogicalTypeId.TUPLE)
+                && target.typeInfo().orElse(null) instanceof ExtraTypeInfo.StructInfo to
+                && source.typeInfo().orElse(null) instanceof ExtraTypeInfo.StructInfo from) {
+            if (to.childTypes().size() != from.childTypes().size()
+                    || from.childTypes().stream().anyMatch(child -> !child.name().isEmpty())) return false;
+            for (int i = 0; i < to.childTypes().size(); i++) {
+                if (!appendTypeCompatible(to.childTypes().get(i).type(), from.childTypes().get(i).type())) return false;
+            }
+            return true;
+        }
+        if (target.id() == LogicalTypeId.LIST && source.id() == LogicalTypeId.LIST
+                && target.typeInfo().orElse(null) instanceof ExtraTypeInfo.ListInfo to
+                && source.typeInfo().orElse(null) instanceof ExtraTypeInfo.ListInfo from) {
+            return appendTypeCompatible(to.childType(), from.childType());
+        }
+        if (target.id() == LogicalTypeId.ARRAY && source.id() == LogicalTypeId.ARRAY
+                && target.typeInfo().orElse(null) instanceof ExtraTypeInfo.ArrayInfo to
+                && source.typeInfo().orElse(null) instanceof ExtraTypeInfo.ArrayInfo from) {
+            return to.size() == from.size() && appendTypeCompatible(to.childType(), from.childType());
+        }
+        return false;
+    }
+
+    private static Object adaptAppendValue(Object value, LogicalType target, LogicalType source) {
+        if (value == null || target.equals(source)) return value;
+        if ((target.id() == LogicalTypeId.STRUCT || target.id() == LogicalTypeId.TUPLE)
+                && target.typeInfo().orElse(null) instanceof ExtraTypeInfo.StructInfo to
+                && source.typeInfo().orElse(null) instanceof ExtraTypeInfo.StructInfo from
+                && value instanceof List<?> fields) {
+            Map<String, Object> named = new LinkedHashMap<>();
+            for (int i = 0; i < to.childTypes().size(); i++) {
+                named.put(to.childTypes().get(i).name(), adaptAppendValue(fields.get(i),
+                        to.childTypes().get(i).type(), from.childTypes().get(i).type()));
+            }
+            return named;
+        }
+        if (target.id() == LogicalTypeId.LIST && source.id() == LogicalTypeId.LIST
+                && target.typeInfo().orElse(null) instanceof ExtraTypeInfo.ListInfo to
+                && source.typeInfo().orElse(null) instanceof ExtraTypeInfo.ListInfo from
+                && value instanceof List<?> elements) {
+            List<Object> converted = new ArrayList<>(elements.size());
+            for (Object element : elements) {
+                converted.add(adaptAppendValue(element, to.childType(), from.childType()));
+            }
+            return converted;
+        }
+        if (target.id() == LogicalTypeId.ARRAY && source.id() == LogicalTypeId.ARRAY
+                && target.typeInfo().orElse(null) instanceof ExtraTypeInfo.ArrayInfo to
+                && source.typeInfo().orElse(null) instanceof ExtraTypeInfo.ArrayInfo from
+                && value instanceof List<?> elements) {
+            List<Object> converted = new ArrayList<>(elements.size());
+            for (Object element : elements) {
+                converted.add(adaptAppendValue(element, to.childType(), from.childType()));
+            }
+            return converted;
+        }
+        throw new QuackProtocolException("APPEND value does not match destination type");
     }
 
     private static String quoteIdentifier(String name) {

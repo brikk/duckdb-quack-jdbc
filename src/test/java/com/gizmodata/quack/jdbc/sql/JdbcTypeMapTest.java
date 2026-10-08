@@ -90,6 +90,16 @@ class JdbcTypeMapTest {
     }
 
     @Test
+    void v3TupleKeepsItsDistinctTypeNameAndJdbcStructRepresentation() {
+        LogicalType tuple = LogicalType.of(LogicalTypeId.TUPLE, new ExtraTypeInfo.StructInfo(
+                List.of(field("", scalar(LogicalTypeId.INTEGER)), field("", scalar(LogicalTypeId.VARCHAR))),
+                Optional.empty()));
+        assertEquals("TUPLE(INTEGER, VARCHAR)", JdbcTypeMap.typeName(tuple));
+        assertEquals("TUPLE(INTEGER, VARCHAR)[]", JdbcTypeMap.typeName(list(tuple)));
+        assertEquals(Types.STRUCT, JdbcTypeMap.toJdbcType(tuple));
+    }
+
+    @Test
     void structTypeNameQuotesNonSimpleFieldNames() {
         assertEquals("STRUCT(\"weird name\" INTEGER)",
                 JdbcTypeMap.typeName(struct(field("weird name", scalar(LogicalTypeId.INTEGER)))));

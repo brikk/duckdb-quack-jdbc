@@ -61,7 +61,15 @@ public class StreamingIntegrationTest {
     }
 
     private QuackConnection connect() throws SQLException {
-        return (QuackConnection) DriverManager.getConnection(server.jdbcUrl());
+        QuackConnection connection = (QuackConnection) DriverManager.getConnection(server.jdbcUrl());
+        if (connection.session().protocolVersion() == 3) {
+            // v3 batches are sized in bytes rather than by chunk count. Keep
+            // them small so these tests exercise multiple real FETCHes.
+            try (Statement s = connection.createStatement()) {
+                s.execute("SET quack_target_batch_bytes=65536");
+            }
+        }
+        return connection;
     }
 
     @Test
@@ -96,7 +104,8 @@ public class StreamingIntegrationTest {
     @Test
     void largerFetchBatchesRemainWithinDefaultDecodeLimits() throws Exception {
         try (QuackConnection c = connect(); Statement s = c.createStatement()) {
-            s.execute("SET quack_fetch_batch_chunks=24");
+            String setting = c.session().protocolVersion() == 3 ? "quack_target_batch_bytes" : "quack_fetch_batch_chunks";
+            s.execute("SET " + setting + "=" + (c.session().protocolVersion() == 3 ? "262144" : "24"));
             try (QuackSession.Cursor cursor = c.session().cursor(
                     "SELECT i, TIMESTAMP '2026-01-01' + i * INTERVAL '1 second' FROM range(100000) t(i)")) {
                 assertTrue(cursor.materializedRowCount() < 100_000);
@@ -111,7 +120,7 @@ public class StreamingIntegrationTest {
                     assertEquals(100_000, row);
                 }
             } finally {
-                s.execute("RESET quack_fetch_batch_chunks");
+                s.execute("RESET " + setting);
             }
         }
     }
@@ -135,12 +144,11 @@ public class StreamingIntegrationTest {
 
     @Test
     void cursorFetchesLazilyForLargeResult() throws Exception {
-        // 200k-row range query is large enough to exceed the server's
-        // default batch (quack_fetch_batch_chunks=12) but small enough to
-        // finish quickly. The cursor must not hold the whole thing in
-        // memory after the initial PREPARE_RESPONSE.
+        // A non-sequential projection exceeds the configured server batch
+        // on both protocols. Plain range values may compress into a single
+        // v3 SEQUENCE payload regardless of the target batch byte setting.
         try (QuackConnection c = connect();
-             QuackSession.Cursor cursor = c.session().cursor("SELECT i FROM range(0, 200000) t(i)")) {
+             QuackSession.Cursor cursor = c.session().cursor("SELECT hash(i) FROM range(0, 200000) t(i)")) {
 
             int initialRows = cursor.materializedRowCount();
             assertTrue(initialRows > 0,

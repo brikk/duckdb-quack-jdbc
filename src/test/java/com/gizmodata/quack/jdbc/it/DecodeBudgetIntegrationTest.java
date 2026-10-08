@@ -3,6 +3,8 @@ package com.gizmodata.quack.jdbc.it;
 import com.gizmodata.quack.jdbc.message.QuackMessage;
 import com.gizmodata.quack.jdbc.sql.QuackDriver;
 import com.gizmodata.quack.jdbc.transport.QuackHttpTransport;
+import com.gizmodata.quack.jdbc.transport.QuackTransport;
+import com.gizmodata.quack.jdbc.sql.QuackConnection;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
@@ -50,14 +52,27 @@ class DecodeBudgetIntegrationTest {
     private Connection connect(AtomicInteger fetches) throws SQLException {
         Connection connection = new QuackDriver().connect(server.jdbcUrl(), new Properties(), uri -> {
             QuackHttpTransport transport = QuackHttpTransport.from(uri);
-            return request -> {
-                if (request instanceof QuackMessage.FetchRequest) fetches.incrementAndGet();
-                return transport.send(request);
+            return new QuackTransport() {
+                @Override public QuackMessage send(QuackMessage request) {
+                    if (request instanceof QuackMessage.FetchRequest) fetches.incrementAndGet();
+                    return transport.send(request);
+                }
+
+                @Override public void setProtocolVersion(long version) {
+                    transport.setProtocolVersion(version);
+                }
             };
         });
-        try (Statement s = connection.createStatement(); ResultSet rs = s.executeQuery("SELECT current_setting('quack_fetch_batch_chunks')")) {
-            assertTrue(rs.next());
-            assertEquals(12, rs.getInt(1));
+        if (((QuackConnection) connection).session().protocolVersion() == 1) {
+            try (Statement s = connection.createStatement(); ResultSet rs = s.executeQuery(
+                    "SELECT current_setting('quack_fetch_batch_chunks')")) {
+                assertTrue(rs.next());
+                assertEquals(12, rs.getInt(1));
+            }
+        } else {
+            try (Statement s = connection.createStatement()) {
+                s.execute("SET quack_target_batch_bytes=65536");
+            }
         }
         fetches.set(0);
         return connection;

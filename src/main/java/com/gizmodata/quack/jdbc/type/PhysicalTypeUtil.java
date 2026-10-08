@@ -28,7 +28,7 @@ public final class PhysicalTypeUtil {
             case DECIMAL -> getDecimalPhysicalType(type);
             case BIGNUM, VARCHAR, CHAR, BLOB, BIT, TYPE, AGGREGATE_STATE, GEOMETRY -> PhysicalType.VARCHAR;
             case INTERVAL -> PhysicalType.INTERVAL;
-            case UNION, VARIANT, STRUCT -> PhysicalType.STRUCT;
+            case UNION, VARIANT, STRUCT, TUPLE -> PhysicalType.STRUCT;
             case LIST, MAP -> PhysicalType.LIST;
             case ARRAY -> PhysicalType.ARRAY;
             case POINTER -> PhysicalType.UINT64;

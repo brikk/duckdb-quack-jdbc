@@ -325,10 +325,10 @@ public final class QuackResultSet extends SkeletalResultSet {
         if ((id == LogicalTypeId.LIST || id == LogicalTypeId.ARRAY) && v instanceof List<?> list) {
             return new QuackArray(list, extractElementType(type));
         }
-        if (id == LogicalTypeId.STRUCT && v instanceof Map<?, ?> struct) {
+        if ((id == LogicalTypeId.STRUCT || id == LogicalTypeId.TUPLE) && v instanceof Map<?, ?> struct) {
             return toStruct(type, struct);
         }
-        if (id == LogicalTypeId.STRUCT && v instanceof List<?> attributes) {
+        if ((id == LogicalTypeId.STRUCT || id == LogicalTypeId.TUPLE) && v instanceof List<?> attributes) {
             return new QuackStruct(JdbcTypeMap.typeName(type), attributes.toArray());
         }
         return v;

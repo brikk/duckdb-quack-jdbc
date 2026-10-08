@@ -52,7 +52,8 @@ public enum LogicalTypeId {
     LAMBDA(106),
     UNION(107),
     ARRAY(108),
-    VARIANT(109);
+    VARIANT(109),
+    TUPLE(110);
 
     private final int wireId;
 

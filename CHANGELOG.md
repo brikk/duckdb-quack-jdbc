@@ -6,8 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Quack v1/v3 connection negotiation, v3 indexed FETCH and data streaming,
+  validated with signed core Quack in DuckDB 2.0.0-alpha45672. Final 2.0
+  release verification remains pending.
+
 ### Fixed
 
+- v3 tuple types and nested positional APPEND values now map to the destination
+  schema. Streaming tests use v3 byte-sized batches rather than removed v1
+  chunk-count settings.
 - **B23:** Column class metadata now matches existing Array/Struct/Map wrappers
   and packed TIMETZ Long values, without changing returned representations.
 - **B24:** Column-label lookup is locale-independent and avoids multi-character

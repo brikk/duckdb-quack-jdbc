@@ -33,7 +33,7 @@ public final class JdbcTypeMap {
             case INTERVAL -> Types.OTHER;
             case UUID -> Types.OTHER;
             case ENUM -> Types.OTHER;
-            case STRUCT -> Types.STRUCT;
+            case STRUCT, TUPLE -> Types.STRUCT;
             case LIST, ARRAY -> Types.ARRAY;
             case MAP -> Types.OTHER;
             case SQLNULL -> Types.NULL;
@@ -82,6 +82,7 @@ public final class JdbcTypeMap {
             case UUID -> "UUID";
             case ENUM -> nested ? enumTypeName(type) : "ENUM";
             case STRUCT -> structTypeName(type);
+            case TUPLE -> tupleTypeName(type);
             case LIST -> type.typeInfo().filter(i -> i instanceof ExtraTypeInfo.ListInfo)
                     .map(i -> (ExtraTypeInfo.ListInfo) i)
                     .map(l -> typeName(l.childType(), true) + "[]")
@@ -113,6 +114,15 @@ public final class JdbcTypeMap {
                                 + typeName(ct.type(), true))
                         .collect(Collectors.joining(", ", "STRUCT(", ")")))
                 .orElse("STRUCT");
+    }
+
+    private static String tupleTypeName(LogicalType type) {
+        return type.typeInfo().filter(i -> i instanceof ExtraTypeInfo.StructInfo)
+                .map(i -> (ExtraTypeInfo.StructInfo) i)
+                .map(s -> s.childTypes().stream()
+                        .map(ct -> typeName(ct.type(), true))
+                        .collect(Collectors.joining(", ", "TUPLE(", ")")))
+                .orElse("TUPLE");
     }
 
     private static String mapTypeName(LogicalType type) {
