@@ -89,6 +89,46 @@ Do not merely raise the driver's advertised protocol range to 3: that would
 claim support for incompatible messages. Protocol v3 remains separate work,
 not a demonstrated requirement for 1.5.6.
 
+## 1.5.6 Final Release Verification (2026-10-09)
+
+The [released `v1.5.6` tag](https://github.com/duckdb/duckdb/releases/tag/v1.5.6)
+is `069cc9f9b5`. Its
+[Quack pin](https://github.com/duckdb/duckdb/blob/v1.5.6/.github/config/extensions/quack.cmake)
+**changed** from the development snapshot checked above to
+`7e80f7ffcc98d0b3e81d0e1df8cc1c2da240a64b`. That pin still declares
+`QUACK_VERSION = 1` and uses v1 PREPARE, FETCH, and APPEND messages; it is
+not the v3 extension from DuckDB 2.0. Do not substitute the earlier
+`c154811` revision for the released extension.
+
+The official 1.5.6 Linux x86-64 CLI and its **signed core** extensions were
+installed and loaded in an isolated directory without `-unsigned`. The CLI
+reports `v1.5.6 (Variegata) 069cc9f9b5`; `duckdb_extensions()` reports
+Quack `7e80f7f` and httpfs `4bc690d`, both loaded from `core` with
+`install_mode=REPOSITORY`; unsigned extensions and unsafe crypto are disabled.
+The current `feature/quack-v1-v3-negotiation` driver was exercised with Java
+21.0.2 / Maven 3.9.16 (compiled for Java 17):
+
+| Profile | Tests | Failures | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| `-Dquack.it.required=true clean verify` | 652 | 0 | 0 | 3 |
+| `-Poracle -Dquack.it.required=true clean verify` | 658 | 0 | 0 | 3 |
+
+The oracle profile uses **released `duckdb_jdbc` 1.5.6.0**. The three skips
+are the optional externally supplied v3 preview test and two IPv6-dependent
+transport tests; **no required integration test was skipped**. The CI
+integration-report gate accepts 14/14 required classes and 45 reports on the
+oracle profile. The oracle profile and report gate also passed under Java
+17.0.2, matching CI's Java major version. To reproduce with the final CLI:
+
+```bash
+QUACK_IT_DUCKDB=/path/to/duckdb-1.5.6 mvn --batch-mode --no-transfer-progress -Dquack.it.required=true clean verify
+QUACK_IT_DUCKDB=/path/to/duckdb-1.5.6 mvn --batch-mode --no-transfer-progress -Poracle -Dquack.it.required=true clean verify
+```
+
+The CI workflow, `mise.toml`, the required fixture's CLI/Quack identity, and
+the JDBC oracle property now pin these released versions. This verifies the
+1.5.6 release-day checklist above; it does not certify the final 2.0 release.
+
 ## DuckDB 2.0 Preview Validation (2026-10-08)
 
 This is separate from the 1.5.6 assessment above. On the
@@ -128,5 +168,5 @@ Before claiming final DuckDB 2.0 support, recheck the final 2.0 tag's Quack
 pin, run full verification with the matching signed extension, and run the
 oracle profile with a 2.0 `duckdb_jdbc` artifact. Do not bump the 1.5.x CI,
 `mise.toml`, or oracle pins on the strength of a 2.0 alpha test alone. The
-1.5.6 release-day checklist above is separate and has not been completed by
-this 2.0 check.
+1.5.6 release-day checklist was subsequently completed against the final
+signed 1.5.6 artifacts, separately from this 2.0 check.

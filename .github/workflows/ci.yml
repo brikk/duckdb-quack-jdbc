@@ -27,7 +27,7 @@ jobs:
 
       - name: Install DuckDB CLI
         env:
-          DUCKDB_VERSION: 1.5.5
+          DUCKDB_VERSION: 1.5.6
         run: |
           set -euo pipefail
           curl -fsSL https://install.duckdb.org | sh
@@ -63,7 +63,9 @@ jobs:
               raise SystemExit("No integration test classes discovered")
 
           allowed_skips = {
-              ("com.gizmodata.quack.jdbc.transport.QuackHttpTransportTest",
+            ("com.gizmodata.quack.jdbc.it.QuackV3PreviewTest",
+             "queryFetchAndSendDataAgainstPreview"): "Set QUACK_V3_IT_DUCKDB and QUACK_V3_IT_EXTENSION",
+            ("com.gizmodata.quack.jdbc.transport.QuackHttpTransportTest",
                "fallsThroughToIpv6WhenIpv4HasNoListener"): "ipv6LoopbackAvailable",
               ("com.gizmodata.quack.jdbc.transport.QuackHttpTransportLimitsTest",
                "connectFailuresStillTryNextAddress"): "requires multiple localhost addresses",

@@ -23,12 +23,12 @@ import java.util.concurrent.TimeUnit;
  * <p>Skips (returns {@code null} from {@link #tryStart}) when the
  * {@code duckdb} binary cannot be located. Set {@code QUACK_IT_DUCKDB} to override
  * its path. {@code -Dquack.it.required=true} instead fails without a CLI and pins
- * DuckDB v1.5.5 and stock Quack c154811; optional local runs may use other versions.
+ * DuckDB v1.5.6 and stock Quack 7e80f7f; optional local runs may use other versions.
  */
 public final class QuackServerFixture implements AutoCloseable {
 
-    static final String DUCKDB_VERSION = "v1.5.5";
-    private static final String QUACK_REVISION = "c1548111c1bfd16207e22fd3cb7e4bde1335b9d0";
+    static final String DUCKDB_VERSION = "v1.5.6";
+    private static final String QUACK_REVISION = "7e80f7ffcc98d0b3e81d0e1df8cc1c2da240a64b";
     private static final String DEFAULT_TOKEN = "quack-jdbc-it-token";
 
     private final Process process;
@@ -179,7 +179,8 @@ public final class QuackServerFixture implements AutoCloseable {
 
     static void validateCliVersion(int exitCode, String output, boolean required) throws IOException {
         if (exitCode != 0 || output == null || output.isBlank()
-                || (required && !output.matches("(?s)^v1\\.5\\.5(?:\\s.*)?$"))) {
+                || (required && !output.matches("(?s)^" + java.util.regex.Pattern.quote(DUCKDB_VERSION)
+                        + "(?:\\s.*)?$"))) {
             throw new IOException("Expected working DuckDB CLI" + (required ? " " + DUCKDB_VERSION : "")
                     + ", got: " + output);
         }

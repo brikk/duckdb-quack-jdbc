@@ -14,6 +14,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Required integration tests and CI now pin released DuckDB 1.5.6 with its
+  signed core Quack extension and the 1.5.6.0 JDBC oracle; both full test
+  profiles pass against the final release.
 - v3 tuple types and nested positional APPEND values now map to the destination
   schema. Streaming tests use v3 byte-sized batches rather than removed v1
   chunk-count settings.

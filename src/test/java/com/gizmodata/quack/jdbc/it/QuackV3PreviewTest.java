@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /** Optional real-wire test; pass a CLI and its exactly matching Quack extension. */
-class QuackV3PreviewIntegrationTest {
+class QuackV3PreviewTest {
     @Test
     void queryFetchAndSendDataAgainstPreview() throws Exception {
         String cli = System.getenv("QUACK_V3_IT_DUCKDB");

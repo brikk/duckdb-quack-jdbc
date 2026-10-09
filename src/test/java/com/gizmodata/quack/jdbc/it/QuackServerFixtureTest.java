@@ -71,13 +71,13 @@ class QuackServerFixtureTest {
 
     @Test
     void cliPinChecksActualOutputAndExitStatusOnlyWhenRequired() throws Exception {
-        QuackServerFixture.validateCliVersion(0, "v1.5.5 (Variegata) d8cdaa33fd", true);
-        for (String wrong : new String[]{"v1.5.4", "v1.5.50", "wrapper says v1.5.5", "", "v1.5.5-dev"}) {
+        QuackServerFixture.validateCliVersion(0, "v1.5.6 (Variegata) 069cc9f9b5", true);
+        for (String wrong : new String[]{"v1.5.5", "v1.5.60", "wrapper says v1.5.6", "", "v1.5.6-dev"}) {
             assertThrows(IOException.class, () -> QuackServerFixture.validateCliVersion(0, wrong, true));
         }
         QuackServerFixture.validateCliVersion(0, "v1.5.4 (Variegata)", false);
         for (boolean required : new boolean[]{false, true}) {
-            assertThrows(IOException.class, () -> QuackServerFixture.validateCliVersion(1, "v1.5.5", required));
+            assertThrows(IOException.class, () -> QuackServerFixture.validateCliVersion(1, "v1.5.6", required));
             assertThrows(IOException.class, () -> QuackServerFixture.validateCliVersion(0, "", required));
         }
     }
@@ -95,19 +95,21 @@ class QuackServerFixtureTest {
     @Test
     void requiredStockIdentityPinsRuntimeAndQuackRevision() throws Exception {
         Path installed = Files.createFile(temp.resolve("quack.duckdb_extension"));
-        QuackServerFixture.validateIdentity(new QuackServerFixture.Identity("v1.5.5", false, false,
-                "quack", true, installed.toString(), "c154811", "REPOSITORY", "core"), temp, true);
+        QuackServerFixture.validateIdentity(new QuackServerFixture.Identity("v1.5.6", false, false,
+                "quack", true, installed.toString(), "7e80f7f", "REPOSITORY", "core"), temp, true);
         for (var wrong : new QuackServerFixture.Identity[]{
-                new QuackServerFixture.Identity("v1.5.4", false, false, "quack", true,
-                        installed.toString(), "c154811", "REPOSITORY", "core"),
                 new QuackServerFixture.Identity("v1.5.5", false, false, "quack", true,
+                        installed.toString(), "7e80f7f", "REPOSITORY", "core"),
+                new QuackServerFixture.Identity("v1.5.6", false, false, "quack", true,
                         installed.toString(), "abcdef0", "REPOSITORY", "core"),
-                new QuackServerFixture.Identity("v1.5.5", false, false, "quack", true,
-                        installed.toString(), "c15481", "REPOSITORY", "core")}) {
+                new QuackServerFixture.Identity("v1.5.6", false, false, "quack", true,
+                        installed.toString(), "7e80f7", "REPOSITORY", "core"),
+                new QuackServerFixture.Identity("v1.5.6", false, false, "quack", true,
+                        installed.toString(), "c154811", "REPOSITORY", "core")}) {
             assertThrows(IOException.class, () -> QuackServerFixture.validateIdentity(wrong, temp, true));
             QuackServerFixture.validateIdentity(wrong, temp, false);
         }
-        QuackServerFixture.validateIdentity(new QuackServerFixture.Identity("v1.5.5", false, false,
+        QuackServerFixture.validateIdentity(new QuackServerFixture.Identity("v1.5.6", false, false,
                 "httpfs", true, installed.toString(), "other-revision", "REPOSITORY", "core"), temp, true);
     }
 
@@ -115,19 +117,19 @@ class QuackServerFixtureTest {
     void stockIdentityRequiresLoadedSignedCoreExtensionsAndSafeCrypto() throws Exception {
         Path installed = Files.createFile(temp.resolve("quack.duckdb_extension"));
         for (var wrong : new QuackServerFixture.Identity[]{
-                new QuackServerFixture.Identity("v1.5.5", true, false, "quack", true,
-                        installed.toString(), "c154811", "REPOSITORY", "core"),
-                new QuackServerFixture.Identity("v1.5.5", false, true, "quack", true,
-                        installed.toString(), "c154811", "REPOSITORY", "core"),
-                new QuackServerFixture.Identity("v1.5.5", false, false, "quack", false,
-                        installed.toString(), "c154811", "REPOSITORY", "core"),
-                new QuackServerFixture.Identity("v1.5.5", false, false, "other", true,
-                        installed.toString(), "c154811", "REPOSITORY", "core"),
-                new QuackServerFixture.Identity("v1.5.5", false, false, "quack", true,
-                        installed.toString(), "c154811", "REPOSITORY", "community"),
-                new QuackServerFixture.Identity("v1.5.5", false, false, "quack", true,
-                        installed.toString(), "c154811", "NOT_INSTALLED", "core"),
-                new QuackServerFixture.Identity("v1.5.5", false, false, "quack", true,
+                new QuackServerFixture.Identity("v1.5.6", true, false, "quack", true,
+                        installed.toString(), "7e80f7f", "REPOSITORY", "core"),
+                new QuackServerFixture.Identity("v1.5.6", false, true, "quack", true,
+                        installed.toString(), "7e80f7f", "REPOSITORY", "core"),
+                new QuackServerFixture.Identity("v1.5.6", false, false, "quack", false,
+                        installed.toString(), "7e80f7f", "REPOSITORY", "core"),
+                new QuackServerFixture.Identity("v1.5.6", false, false, "other", true,
+                        installed.toString(), "7e80f7f", "REPOSITORY", "core"),
+                new QuackServerFixture.Identity("v1.5.6", false, false, "quack", true,
+                        installed.toString(), "7e80f7f", "REPOSITORY", "community"),
+                new QuackServerFixture.Identity("v1.5.6", false, false, "quack", true,
+                        installed.toString(), "7e80f7f", "NOT_INSTALLED", "core"),
+                new QuackServerFixture.Identity("v1.5.6", false, false, "quack", true,
                         installed.toString(), "", "REPOSITORY", "core")}) {
             for (boolean required : new boolean[]{false, true}) {
                 assertThrows(IOException.class, () -> QuackServerFixture.validateIdentity(wrong, temp, required));
@@ -140,8 +142,8 @@ class QuackServerFixtureTest {
         Path extensions = Files.createDirectory(temp.resolve("extensions"));
         Path installed = Files.createFile(extensions.resolve("quack.duckdb_extension"));
         Path alias = Files.createSymbolicLink(extensions.resolve("quack-link"), installed);
-        QuackServerFixture.validateIdentity(new QuackServerFixture.Identity("v1.5.5", false, false,
-                "quack", true, alias.toString(), "c154811", "REPOSITORY", "core"), extensions, true);
+        QuackServerFixture.validateIdentity(new QuackServerFixture.Identity("v1.5.6", false, false,
+                "quack", true, alias.toString(), "7e80f7f", "REPOSITORY", "core"), extensions, true);
         Path cached = Files.createFile(temp.resolve("cached-extension"));
         Path symlink = Files.createSymbolicLink(extensions.resolve("cache-link"), cached);
         for (String wrong : new String[]{null, "", "bad\0path", extensions.toString(),
@@ -149,8 +151,8 @@ class QuackServerFixtureTest {
                 extensions.resolve("../cached-extension").toString()}) {
             for (boolean required : new boolean[]{false, true}) {
                 assertThrows(IOException.class, () -> QuackServerFixture.validateIdentity(
-                        new QuackServerFixture.Identity("v1.5.5", false, false, "quack", true,
-                                wrong, "c154811", "REPOSITORY", "core"), extensions, required));
+                        new QuackServerFixture.Identity("v1.5.6", false, false, "quack", true,
+                                wrong, "7e80f7f", "REPOSITORY", "core"), extensions, required));
             }
         }
     }

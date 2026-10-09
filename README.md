@@ -12,8 +12,8 @@ familiar `jdbc:quack://` URL.
 [![GitHub Repo](https://img.shields.io/badge/github-brikk%2Fduckdb--quack--jdbc-181717?logo=github)](https://github.com/brikk/duckdb-quack-jdbc)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **Status:** Experimental / alpha. Protocol v1 is tested against DuckDB 1.5.5
-> and its signed core Quack extension, with native `duckdb_jdbc` 1.5.5.0 as a
+> **Status:** Experimental / alpha. Protocol v1 is tested against DuckDB 1.5.6
+> and its signed core Quack extension, with native `duckdb_jdbc` 1.5.6.0 as a
 > behavioral oracle. The branch also supports Quack v3, tested against the
 > signed core extension in DuckDB `v2.0.0-alpha45672` (not yet a released 2.0
 > server). Neither protocol needs a custom server extension. See
