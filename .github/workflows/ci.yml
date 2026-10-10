@@ -168,6 +168,19 @@ jobs:
           gpg-private-key: ${{ secrets.KOTLIN_TOOLCHAIN_SIGNING_KEY }}
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
 
+      # Maven 3.10 puts _remote.repositories and maven-metadata-local.xml in
+      # Central's bundle; the 0.11.0 publisher does not remove them, so
+      # validation rejects it. Keep the publishing job on the tested 3.9.16.
+      - name: Install Maven 3.9.16 for Central publishing
+        run: |
+          set -euo pipefail
+          ARCHIVE="$RUNNER_TEMP/apache-maven-3.9.16-bin.tar.gz"
+          curl -fsSL 'https://archive.apache.org/dist/maven/maven-3/3.9.16/binaries/apache-maven-3.9.16-bin.tar.gz' -o "$ARCHIVE"
+          echo '831a8591fe20c8243b1dbe7d71e3244f31d1665b0804b2e825e38cbbe5ce0cafb8338851f90780735568773e0a6cd07bbec107cda0b896b008b861075358b6f6  '"$ARCHIVE" | sha512sum -c -
+          tar -xzf "$ARCHIVE" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/apache-maven-3.9.16/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/apache-maven-3.9.16/bin/mvn" --version
+
       - name: Deploy
         env:
           MAVEN_USERNAME: ${{ secrets.KOTLIN_TOOLCHAIN_MAVEN_CENTRAL_USERNAME }}
