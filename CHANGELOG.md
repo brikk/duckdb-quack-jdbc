@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-10-10
+
 ### Added
 
 - Quack v1/v3 connection negotiation, v3 indexed FETCH and data streaming,

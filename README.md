@@ -12,13 +12,22 @@ familiar `jdbc:quack://` URL.
 [![GitHub Repo](https://img.shields.io/badge/github-brikk%2Fduckdb--quack--jdbc-181717?logo=github)](https://github.com/brikk/duckdb-quack-jdbc)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **Status:** Experimental / alpha. Protocol v1 is tested against DuckDB 1.5.6
-> and its signed core Quack extension, with native `duckdb_jdbc` 1.5.6.0 as a
-> behavioral oracle. The branch also supports Quack v3, tested against the
-> signed core extension in DuckDB `v2.0.0-alpha45672` (not yet a released 2.0
-> server). Neither protocol needs a custom server extension. See
-> [DuckDB release compatibility](DUCKDB_COMPATIBILITY.md) for exact revisions
-> and verification scope.
+> **Status:** Experimental / alpha. Version `0.8.0` supports both Quack v1
+> for DuckDB 1.5.x and Quack v3 for the DuckDB 2.0 prerelease.
+
+| DuckDB server | Quack protocol | Verified for 0.8.0 |
+| --- | --- | --- |
+| 1.5.5 and released 1.5.6 | v1 | Full integration tests against signed core Quack; 1.5.6 also tested with native `duckdb_jdbc` 1.5.6.0 as an oracle. |
+| 2.0.0-alpha45672 | v3 | Full integration tests against signed core Quack `974927a394`; **prerelease only**. |
+
+The v1 path remains backwards-compatible with DuckDB 1.5.x's Quack protocol;
+other 1.5.x patch releases have not all been separately certified. Version
+`0.6.0` supports **v1 only**; use `0.8.0` for both v1 and v3. The final DuckDB
+2.0 release and any changed Quack extension pin still need verification before
+claiming final-2.0 compatibility. Neither
+protocol needs a custom server extension. See
+[DuckDB release compatibility](DUCKDB_COMPATIBILITY.md) for exact revisions,
+test scope, and remaining release checks.
 
 The connection handshake selects Quack v1 or v3. A v3 server requires a second
 handshake round trip to supply its heartbeat lease; the driver then sends
@@ -49,20 +58,22 @@ with `duckdb -unsigned`.)
 
 ### 2. Add the driver to your project
 
+The examples below use version `0.8.0` (Quack v1 and v3).
+
 **Maven:**
 
 ```xml
 <dependency>
     <groupId>dev.brikk.duckdb</groupId>
     <artifactId>quack-jdbc</artifactId>
-    <version>0.6.0</version>
+    <version>0.8.0</version>
 </dependency>
 ```
 
 **Gradle:**
 
 ```groovy
-implementation "dev.brikk.duckdb:quack-jdbc:0.6.0"
+implementation "dev.brikk.duckdb:quack-jdbc:0.8.0"
 ```
 
 **Direct jar download** (for DBeaver, DataGrip, or any tool that takes a `.jar`):

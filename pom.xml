@@ -7,7 +7,7 @@
 
     <groupId>dev.brikk.duckdb</groupId>
     <artifactId>quack-jdbc</artifactId>
-    <version>0.8.0-SNAPSHOT</version>
+    <version>0.8.0</version>
     <packaging>jar</packaging>
 
     <name>quack-jdbc</name>
@@ -222,8 +222,8 @@
                         <extensions>true</extensions>
                         <configuration>
                             <publishingServerId>central</publishingServerId>
-                            <autoPublish>false</autoPublish>
-                            <waitUntil>validated</waitUntil>
+                            <autoPublish>true</autoPublish>
+                            <waitUntil>published</waitUntil>
                         </configuration>
                     </plugin>
                 </plugins>
