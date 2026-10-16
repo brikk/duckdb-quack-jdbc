@@ -6,6 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Testing
+
+- Verified the existing v3 wire implementation against signed core Quack
+  `e7a9be3f8c` in DuckDB 2.0.0-alpha48630. Adjusted an invalid TIME_NS
+  regression test to accept either server-side or driver-side rejection.
+
 ## [0.8.0] — 2026-10-10
 
 ### Added
@@ -126,7 +132,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   retaining shared budgets, structural expansion charges, and malformed-input
   guards. CONSTANT/DICTIONARY sources are charged once, not per projected row.
 
-Review IDs and verification details are recorded in [CODE_REVIEW.md](CODE_REVIEW.md).
+Review IDs and verification details are recorded in [the archived review](dev-docs/archive/CODE_REVIEW.md).
 Other findings remain open; the review records current resolution status.
 
 ## [0.6.0] — 2026-07-29

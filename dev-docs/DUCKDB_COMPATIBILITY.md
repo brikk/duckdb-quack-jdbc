@@ -170,3 +170,25 @@ oracle profile with a 2.0 `duckdb_jdbc` artifact. Do not bump the 1.5.x CI,
 `mise.toml`, or oracle pins on the strength of a 2.0 alpha test alone. The
 1.5.6 release-day checklist was subsequently completed against the final
 signed 1.5.6 artifacts, separately from this 2.0 check.
+
+## DuckDB 2.0 Preview Recheck (2026-10-16)
+
+The [staged CLI](https://artifacts.duckdb.org/staged/v2.0-cyanoptera/duckdb-cli-linux-amd64.tar.gz)
+reported `v2.0.0-alpha48630` (`f2ba7850dd`). Its
+[pinned Quack revision](https://github.com/duckdb/duckdb/blob/f2ba7850dd/.github/config/extensions/quack.cmake)
+is `e7a9be3f8c1c3be5946e534c96f15b56b81dc026` (the loaded signed core
+extension reports `e7a9be3f8c`); httpfs reports `957e7ff8eb`. Both installed
+from `core` in an isolated directory without `-unsigned`. Quack still uses
+protocol v3; the message schema retains its field IDs, including FETCH field
+1, which was renamed from `uuid` to `query_uuid` in upstream source.
+
+Against this signed server, the current `main` source (`0.9.0-SNAPSHOT`, with
+the same v3 implementation as released 0.8.0) passes
+`QUACK_IT_DUCKDB=/tmp/opencode/quack-v2-oct16/duckdb mvn clean verify`:
+**652 tests, zero failures/errors, three skips** (optional external v3 pair
+and two IPv6-dependent tests). Before the test adjustment, one assertion
+expected our decoder's `QuackUnsupportedTypeException` for
+`'24:00:00.000000001'::TIME_NS`; DuckDB now rejects that invalid literal
+before sending it. The test accepts only the expected server out-of-range
+error or the prior driver-side rejection, so it remains meaningful on both
+versions. This is not a v3 wire break and does not certify final DuckDB 2.0.

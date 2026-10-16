@@ -1,6 +1,7 @@
 package com.gizmodata.quack.jdbc.it;
 
 import com.gizmodata.quack.jdbc.QuackUnsupportedTypeException;
+import com.gizmodata.quack.jdbc.QuackServerException;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
@@ -107,7 +108,15 @@ public class NestedReadEdgeIntegrationTest {
                 }
             }
             SQLException error = assertThrows(SQLException.class, () -> s.executeQuery("SELECT '24:00:00.000000001'::TIME_NS"));
-            assertInstanceOf(QuackUnsupportedTypeException.class, error.getCause());
+            // Older DuckDB versions send this out-of-range value on the wire,
+            // where our decoder rejects it. Newer 2.0 previews reject the
+            // invalid literal on the server before it reaches the driver.
+            if (error.getCause() instanceof QuackServerException serverError) {
+                assertTrue(serverError.getServerMessage().contains("time field value out of range"),
+                        serverError.getServerMessage());
+            } else {
+                assertInstanceOf(QuackUnsupportedTypeException.class, error.getCause());
+            }
         }
     }
 

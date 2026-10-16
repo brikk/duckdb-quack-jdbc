@@ -15,10 +15,11 @@ familiar `jdbc:quack://` URL.
 > **Status:** Experimental / alpha. Version `0.8.0` supports both Quack v1
 > for DuckDB 1.5.x and Quack v3 for the DuckDB 2.0 prerelease.
 
-| DuckDB server | Quack protocol | Verified for 0.8.0 |
+| DuckDB server | Quack protocol | Verification |
 | --- | --- | --- |
 | 1.5.5 and released 1.5.6 | v1 | Full integration tests against signed core Quack; 1.5.6 also tested with native `duckdb_jdbc` 1.5.6.0 as an oracle. |
 | 2.0.0-alpha45672 | v3 | Full integration tests against signed core Quack `974927a394`; **prerelease only**. |
+| 2.0.0-alpha48630 | v3 | Current `0.9.0-SNAPSHOT` source (the same v3 implementation as 0.8.0): full default suite passes against signed core Quack `e7a9be3f8c`; **prerelease only**, not a final 2.0 certification. |
 
 The v1 path remains backwards-compatible with DuckDB 1.5.x's Quack protocol;
 other 1.5.x patch releases have not all been separately certified. Version
@@ -26,7 +27,7 @@ other 1.5.x patch releases have not all been separately certified. Version
 2.0 release and any changed Quack extension pin still need verification before
 claiming final-2.0 compatibility. Neither
 protocol needs a custom server extension. See
-[DuckDB release compatibility](DUCKDB_COMPATIBILITY.md) for exact revisions,
+[DuckDB release compatibility](dev-docs/DUCKDB_COMPATIBILITY.md) for exact revisions,
 test scope, and remaining release checks.
 
 The connection handshake selects Quack v1 or v3. A v3 server requires a second
@@ -35,7 +36,9 @@ heartbeats while the connection is open. Queries, indexed FETCH responses,
 and bulk `appendChunk` use the selected wire format. A server selecting an
 unsupported version (including v2) fails at connect rather than executing
 SQL with a mismatched message layout. The v3 implementation was verified with
-DuckDB's [pinned `duckdb-quack` revision `974927a`](https://github.com/duckdb/duckdb/blob/f2f9329721/.github/config/extensions/quack.cmake).
+DuckDB's pinned `duckdb-quack` revisions
+[`974927a`](https://github.com/duckdb/duckdb/blob/f2f9329721/.github/config/extensions/quack.cmake)
+and [`e7a9be3`](https://github.com/duckdb/duckdb/blob/f2ba7850dd/.github/config/extensions/quack.cmake).
 v3 batches are byte-sized and may contain more rows than the PREPARE inline-row
 hint; the driver inlines a first batch to retain JDBC DML/error behavior.
 DuckDB 2.0's final extension pin and wire behavior still need release testing.

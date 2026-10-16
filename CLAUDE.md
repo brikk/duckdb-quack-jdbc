@@ -49,7 +49,7 @@ done
 ```bash
 mvn package          # build
 mvn test             # unit + integration (needs duckdb on PATH)
-mvn -Dtest='!Quack*IntegrationTest' test    # unit only
+mvn -Poracle -Dquack.it.required=true verify  # required CI profile
 ```
 
 Integration tests spawn a real DuckDB CLI as a Quack server. They auto-skip
@@ -62,16 +62,15 @@ extension — the integration fixture runs `INSTALL quack; LOAD quack;`
 against a stock `duckdb` binary (no `-unsigned`, no `core_nightly`).
 For pre-1.5.3 DuckDB builds, use `INSTALL quack FROM core_nightly` with
 `duckdb -unsigned`. CI, `mise.toml`, and the `-Poracle` `duckdb_jdbc`
-dependency are pinned to DuckDB 1.5.5.
+dependency are pinned to released DuckDB 1.5.6.
 
-The wire format was clean-room ported from the TypeScript reference
-(`@quack-protocol/sdk`) at upstream commit
-`daae4826f57986fbb6cc2116316f89c673814b23` (2026-05-10; upstream has
-since squashed its history — the wire-format sources are unchanged as of
-upstream HEAD `12018799`, 2026-05-20). The full driver suite passes
-against DuckDB v1.5.5's bundled `quack` (146 tests on the default
-profile; 149 with `-Poracle` parity against `duckdb_jdbc` 1.5.5.0).
-Re-verify when DuckDB cuts a new patch release.
+The v1 wire format was clean-room ported from `@quack-protocol/sdk`; v3 support
+tracks DuckDB's pinned Quack schema. The full driver suite passes against
+DuckDB 1.5.6's signed core Quack v1 and the signed Quack v3 in the tested
+DuckDB 2.0 previews. For exact revisions, test results, and the final 2.0
+release checklist, see [release compatibility](dev-docs/DUCKDB_COMPATIBILITY.md).
+The original review and historical verification are in
+[dev-docs/archive/CODE_REVIEW.md](dev-docs/archive/CODE_REVIEW.md).
 
 ## DBeaver metadata reference
 
@@ -94,15 +93,14 @@ cross-reference DuckDB's `src/main/java/org/duckdb/DuckDBDatabaseMetaData.java`.
 
 ## Release process
 
-1. Verify `mvn test` is green on all targets in CI.
-2. Bump `version` in `pom.xml`, update `CHANGELOG.md`, commit.
-3. Tag `vX.Y.Z` and push the tag. CI publishes to Maven Central on tagged
-   commits to `main`.
+1. Verify the signed-server oracle profile and any supported preview profile.
+2. Create a release branch, bump `pom.xml`, update `CHANGELOG.md` and `README.md`.
+3. Push the version tag from that branch. Tag CI tests and publishes to Maven
+   Central and GitHub Releases. After publication, advance `main` and bump its
+   next `-SNAPSHOT` version.
 
 ## Roadmap
 
-- APPEND_REQUEST encoder + a streaming `appendChunk()` API
 - FSST vector decoding
-- Full `java.sql.Array` / `java.sql.Struct` wrapping for nested types
 - Native PREPARE_REQUEST parameter binding once the protocol surfaces it
 - Companion ADBC driver in Go (same wire codec layer ported)
