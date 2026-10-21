@@ -98,19 +98,38 @@ public class OracleParityIntegrationTest {
     }
 
     @Test
-    void unnamedStructValuesAndTypeNamesMatchNative() throws Exception {
-        for (String sql : new String[]{"SELECT row(1, 2) AS v", "SELECT row(NULL::INTEGER, 'text') AS v",
-                "SELECT row(NULL::INTEGER, NULL::INTEGER) AS v"}) {
+    void unnamedStructsKeepPositionalValuesAcrossNativeJdbcVersions() throws Exception {
+        String[] queries = {"SELECT row(1, 2) AS v", "SELECT row(NULL::INTEGER, 'text') AS v",
+                "SELECT row(NULL::INTEGER, NULL::INTEGER) AS v"};
+        Object[][] values = {{1, 2}, {null, "text"}, {null, null}};
+        for (int i = 0; i < queries.length; i++) {
+            String sql = queries[i];
             try (Statement qs = quack.createStatement(); Statement os = oracle.createStatement();
-                 ResultSet q = qs.executeQuery(sql); ResultSet o = os.executeQuery(sql)) {
+                  ResultSet q = qs.executeQuery(sql); ResultSet o = os.executeQuery(sql)) {
                 assertTrue(q.next());
                 assertTrue(o.next());
-                Struct expected = (Struct) o.getObject(1);
+                Object nativeValue = o.getObject(1);
                 Struct actual = (Struct) q.getObject(1);
-                assertArrayEquals(expected.getAttributes(), actual.getAttributes(), sql);
-                assertEquals(expected.getSQLTypeName(), actual.getSQLTypeName(), sql);
+                assertArrayEquals(values[i], actual.getAttributes(), sql);
+                assertArrayEquals(values[i], q.getObject(1, Struct.class).getAttributes(), sql);
+                assertEquals(Types.STRUCT, q.getMetaData().getColumnType(1), sql);
+                assertEquals(com.gizmodata.quack.jdbc.sql.QuackStruct.class.getName(),
+                        q.getMetaData().getColumnClassName(1), sql);
+                if (nativeValue instanceof Struct expected) {
+                    // DuckDB 1.5.x exposes unnamed STRUCTs through JDBC Struct.
+                    assertArrayEquals(expected.getAttributes(), actual.getAttributes(), sql);
+                    assertEquals(expected.getSQLTypeName(), actual.getSQLTypeName(), sql);
+                    assertEquals(o.getMetaData().getColumnType(1), q.getMetaData().getColumnType(1), sql);
+                } else {
+                    // DuckDB JDBC 2.0 temporarily leaves its new TUPLE logical
+                    // type unmapped (duckdb-java#728): UNKNOWN -> String/OTHER.
+                    // Keep our supported Struct representation, not that fallback.
+                    assertEquals(String.class, nativeValue.getClass(), sql);
+                    assertEquals(Types.OTHER, o.getMetaData().getColumnType(1), sql);
+                    assertEquals(String.class.getName(), o.getMetaData().getColumnClassName(1), sql);
+                    assertTrue(q.getMetaData().getColumnTypeName(1).startsWith("TUPLE("), sql);
+                }
                 assertEquals(o.getMetaData().getColumnTypeName(1), q.getMetaData().getColumnTypeName(1), sql);
-                assertEquals(o.getMetaData().getColumnType(1), q.getMetaData().getColumnType(1), sql);
             }
         }
     }

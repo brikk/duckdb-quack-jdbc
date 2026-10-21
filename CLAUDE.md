@@ -66,9 +66,9 @@ dependency are pinned to released DuckDB 1.5.6.
 
 The v1 wire format was clean-room ported from `@quack-protocol/sdk`; v3 support
 tracks DuckDB's pinned Quack schema. The full driver suite passes against
-DuckDB 1.5.6's signed core Quack v1 and the signed Quack v3 in the tested
-DuckDB 2.0 previews. For exact revisions, test results, and the final 2.0
-release checklist, see [release compatibility](dev-docs/DUCKDB_COMPATIBILITY.md).
+DuckDB 1.5.6's signed core Quack v1 and released DuckDB 2.0.0's signed
+core Quack v3. For exact revisions and test results, see
+[release compatibility](dev-docs/DUCKDB_COMPATIBILITY.md).
 The original review and historical verification are in
 [dev-docs/archive/CODE_REVIEW.md](dev-docs/archive/CODE_REVIEW.md).
 

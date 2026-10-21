@@ -44,62 +44,7 @@ jobs:
 
       - name: Require complete integration reports
         if: ${{ always() && steps.tests.outcome != 'skipped' }}
-        shell: python
-        run: |
-          import pathlib
-          import re
-          import xml.etree.ElementTree as ET
-
-          expected = set()
-          for source in pathlib.Path("src/test").rglob("*.java"):
-              text = source.read_text()
-              if not (re.search(r'@Tag\(\s*"integration"\s*\)', text)
-                      or source.stem.endswith("IntegrationTest")):
-                  continue
-              package = re.search(r"^package\s+([\w.]+)\s*;", text, re.MULTILINE)
-              if package:
-                  expected.add(package.group(1) + "." + source.stem)
-          if not expected:
-              raise SystemExit("No integration test classes discovered")
-
-          allowed_skips = {
-            ("com.gizmodata.quack.jdbc.it.QuackV3PreviewTest",
-             "queryFetchAndSendDataAgainstPreview"): "Set QUACK_V3_IT_DUCKDB and QUACK_V3_IT_EXTENSION",
-            ("com.gizmodata.quack.jdbc.transport.QuackHttpTransportTest",
-               "fallsThroughToIpv6WhenIpv4HasNoListener"): "ipv6LoopbackAvailable",
-              ("com.gizmodata.quack.jdbc.transport.QuackHttpTransportLimitsTest",
-               "connectFailuresStillTryNextAddress"): "requires multiple localhost addresses",
-          }
-          seen = set()
-          errors = []
-          reports = sorted(pathlib.Path("target/surefire-reports").glob("TEST-*.xml"))
-          for report in reports:
-              root = ET.parse(report).getroot()
-              for suite in root.iter("testsuite"):
-                  cases = suite.findall("testcase")
-                  name = suite.get("name", "")
-                  if name in expected:
-                      if not cases or int(suite.get("tests", "0")) == 0:
-                          errors.append(f"Empty integration report: {report}")
-                      else:
-                          seen.add(name)
-                  for case in cases:
-                      classname = case.get("classname", name)
-                      method = case.get("name", "").removesuffix("()")
-                      if classname in expected:
-                          seen.add(classname)
-                      if case.find("failure") is not None or case.find("error") is not None:
-                          errors.append(f"Failed test: {classname}#{method}")
-                      skipped = case.find("skipped")
-                      if skipped is not None:
-                          reason = skipped.get("message", "") + " " + "".join(skipped.itertext())
-                          allowed_reason = allowed_skips.get((classname, method))
-                          if classname in expected or not allowed_reason or allowed_reason not in reason:
-                              errors.append(f"Unexpected skip: {classname}#{method}: {reason}")
-          errors.extend(f"Missing integration report: {name}" for name in sorted(expected - seen))
-          print(f"Integration reports: {len(seen & expected)}/{len(expected)} classes; {len(reports)} total reports")
-          if errors:
-              raise SystemExit("\n".join(errors))
+        run: python3 scripts/check-integration-reports.py
 
       - name: Upload test reports on failure
         if: failure()
@@ -110,9 +55,52 @@ jobs:
             target/surefire-reports/
             target/quack-fixture-logs/**/*.log
 
+  test-v2:
+    name: Build & test (DuckDB 2.0.0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Install DuckDB 2.0.0 CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL 'https://github.com/duckdb/duckdb/releases/download/v2.0.0/duckdb-cli-linux-amd64.tar.gz' -o "$RUNNER_TEMP/duckdb-cli.tar.gz"
+          tar -xzf "$RUNNER_TEMP/duckdb-cli.tar.gz" -C "$RUNNER_TEMP"
+          CLI="$RUNNER_TEMP/duckdb"
+          test -x "$CLI"
+          "$CLI" --version | grep -E '^v2\.0\.0[[:space:]]'
+          echo "QUACK_IT_DUCKDB=$CLI" >> "$GITHUB_ENV"
+
+      - name: Build and run 2.0 oracle tests
+        id: tests
+        run: mvn --batch-mode --no-transfer-progress -Poracle -Dduckdb.jdbc.version=2.0.0.0 verify
+
+      - name: Require signed 2.0.0 integration reports
+        if: ${{ always() && steps.tests.outcome != 'skipped' }}
+        env:
+          QUACK_IT_EXPECTED_VERSION: v2.0.0
+          QUACK_IT_EXPECTED_QUACK: f96420ed46
+        run: python3 scripts/check-integration-reports.py
+
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: surefire-reports-duckdb-2
+          path: |
+            target/surefire-reports/
+            target/quack-fixture-logs/**/*.log
+
   snapshot:
     name: Publish verified SNAPSHOT
-    needs: test
+    needs: [test, test-v2]
     if: >-
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       github.ref == 'refs/heads/main'
@@ -150,7 +138,7 @@ jobs:
 
   publish:
     name: Publish to Maven Central
-    needs: test
+    needs: [test, test-v2]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:

@@ -8,6 +8,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing
 
+- Verified released DuckDB 2.0.0 with signed core Quack `f96420ed46` against
+  the full default and native JDBC 2.0.0.0 oracle profiles. TUPLE remains a
+  positional JDBC Struct in this driver; native JDBC currently falls back to
+  String/OTHER for the unmapped type (duckdb-java#728). Oracle tests explicitly
+  cover this intentional divergence while retaining DuckDB 1.5.6 parity.
+- Publication CI gates snapshots and releases on signed DuckDB 1.5.6/v1
+  and 2.0.0/v3 integration and version-matched oracle runs.
 - Verified the existing v3 wire implementation against signed core Quack
   `e7a9be3f8c` in DuckDB 2.0.0-alpha48630. Adjusted an invalid TIME_NS
   regression test to accept either server-side or driver-side rejection.

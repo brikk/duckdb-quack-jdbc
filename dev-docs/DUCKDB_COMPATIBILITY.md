@@ -192,3 +192,38 @@ expected our decoder's `QuackUnsupportedTypeException` for
 before sending it. The test accepts only the expected server out-of-range
 error or the prior driver-side rejection, so it remains meaningful on both
 versions. This is not a v3 wire break and does not certify final DuckDB 2.0.
+
+## DuckDB 2.0.0 Final Release Verification (2026-10-21)
+
+The official [DuckDB 2.0.0 release](https://github.com/duckdb/duckdb/releases/tag/v2.0.0)
+CLI reports `v2.0.0` (`d54cbbe3df`). Its
+[Quack pin](https://github.com/duckdb/duckdb/blob/v2.0.0/.github/config/extensions/quack.cmake)
+is `f96420ed46aee9c42064bdb99ddfd1230d6c0086`: signed core Quack reports
+`f96420ed46`, protocol v3. The signed core httpfs reports `77392a7207`. Both
+were installed from `core` in an isolated directory with unsigned extensions
+and unsafe crypto disabled.
+
+The current `0.9.0-SNAPSHOT` source (same v3 runtime implementation as 0.8.0)
+was tested with the released server:
+
+| Profile | Tests | Failures | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| `QUACK_IT_DUCKDB=/tmp/opencode/quack-v2-release/duckdb mvn clean verify` | 652 | 0 | 0 | 3 |
+| `-Poracle -Dduckdb.jdbc.version=2.0.0.0 clean verify` with that CLI | 658 | 0 | 0 | 3 |
+
+The oracle profile also passed on Java 17. No required integration test was
+skipped; the three skips are the optional external preview-artifact test and
+two IPv6-dependent transport tests. The 1.5.6/v1 oracle profile also passes
+on Java 17, preserving the backwards-compatibility gate.
+
+**Intentional parity exception:** DuckDB's
+[dedicated TUPLE type](https://github.com/duckdb/duckdb/pull/23465) replaced
+unnamed structs. DuckDB's C API still exposes tuples as unnamed structs, but
+[duckdb-java#728](https://github.com/duckdb/duckdb-java/pull/728) temporarily
+excluded TUPLE from its type-coverage test; the released JDBC driver has no
+TUPLE mapping and falls back to `String`/`Types.OTHER`. We preserve the
+positional `java.sql.Struct`/`Types.STRUCT` behavior shipped in 0.8.0 and
+assert that divergence explicitly in the version-matched oracle test rather
+than copying an upstream JDBC fallback. Full suite success therefore means
+wire/JDBC coverage with this documented exception, **not** identical native
+JDBC `getObject()` results for every logical type.

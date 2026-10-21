@@ -13,20 +13,23 @@ familiar `jdbc:quack://` URL.
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > **Status:** Experimental / alpha. Version `0.8.0` supports both Quack v1
-> for DuckDB 1.5.x and Quack v3 for the DuckDB 2.0 prerelease.
+> for DuckDB 1.5.x and Quack v3 for released DuckDB 2.0.0.
 
 | DuckDB server | Quack protocol | Verification |
 | --- | --- | --- |
 | 1.5.5 and released 1.5.6 | v1 | Full integration tests against signed core Quack; 1.5.6 also tested with native `duckdb_jdbc` 1.5.6.0 as an oracle. |
 | 2.0.0-alpha45672 | v3 | Full integration tests against signed core Quack `974927a394`; **prerelease only**. |
-| 2.0.0-alpha48630 | v3 | Current `0.9.0-SNAPSHOT` source (the same v3 implementation as 0.8.0): full default suite passes against signed core Quack `e7a9be3f8c`; **prerelease only**, not a final 2.0 certification. |
+| 2.0.0-alpha48630 | v3 | Full default suite passed against signed core Quack `e7a9be3f8c`. |
+| Released 2.0.0 | v3 | Current `0.9.0-SNAPSHOT` source (the same v3 implementation as 0.8.0): full default and version-matched oracle suites pass against signed core Quack `f96420ed46`. |
 
 The v1 path remains backwards-compatible with DuckDB 1.5.x's Quack protocol;
 other 1.5.x patch releases have not all been separately certified. Version
-`0.6.0` supports **v1 only**; use `0.8.0` for both v1 and v3. The final DuckDB
-2.0 release and any changed Quack extension pin still need verification before
-claiming final-2.0 compatibility. Neither
-protocol needs a custom server extension. See
+`0.6.0` supports **v1 only**; use `0.8.0` for both v1 and v3. DuckDB's native
+JDBC 2.0.0.0 temporarily reports its new `TUPLE` type as `String`/`Types.OTHER`
+because it does not yet map that type. This driver deliberately preserves
+positional `Struct`/`Types.STRUCT` for tuples, as it did in 0.8.0; this is an
+**intentional native-JDBC parity exception**, not a wire compatibility failure.
+Neither protocol needs a custom server extension. See
 [DuckDB release compatibility](dev-docs/DUCKDB_COMPATIBILITY.md) for exact revisions,
 test scope, and remaining release checks.
 
@@ -38,10 +41,12 @@ unsupported version (including v2) fails at connect rather than executing
 SQL with a mismatched message layout. The v3 implementation was verified with
 DuckDB's pinned `duckdb-quack` revisions
 [`974927a`](https://github.com/duckdb/duckdb/blob/f2f9329721/.github/config/extensions/quack.cmake)
-and [`e7a9be3`](https://github.com/duckdb/duckdb/blob/f2ba7850dd/.github/config/extensions/quack.cmake).
+[`e7a9be3`](https://github.com/duckdb/duckdb/blob/f2ba7850dd/.github/config/extensions/quack.cmake),
+and released 2.0.0's [`f96420ed`](https://github.com/duckdb/duckdb/blob/v2.0.0/.github/config/extensions/quack.cmake).
 v3 batches are byte-sized and may contain more rows than the PREPARE inline-row
 hint; the driver inlines a first batch to retain JDBC DML/error behavior.
-DuckDB 2.0's final extension pin and wire behavior still need release testing.
+The signed DuckDB 2.0.0 extension and native JDBC 2.0.0.0 oracle are covered
+by the 0.9.0 verification suite.
 
 ## Quickstart
 
