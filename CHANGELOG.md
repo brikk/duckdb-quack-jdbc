@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-10-21
+
 ### Testing
 
 - Verified released DuckDB 2.0.0 with signed core Quack `f96420ed46` against

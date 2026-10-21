@@ -11,6 +11,10 @@ on:
 permissions:
   contents: write  # required for the github-release job to upload assets
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Build & test
