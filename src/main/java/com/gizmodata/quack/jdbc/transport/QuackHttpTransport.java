@@ -161,7 +161,8 @@ public final class QuackHttpTransport implements QuackTransport {
                 QuackMessage decoded = MessageCodec.decode(readResponseBody(responseBody), decodeLimits,
                         protocolVersion);
                 if (decoded instanceof QuackMessage.ErrorResponse err) {
-                    throw new QuackServerException(err.message());
+                    throw new QuackServerException(err.message(), err.exceptionType(),
+                            err.extraInfo(), err.mustInvalidate());
                 }
                 return decoded;
             } catch (IOException e) {

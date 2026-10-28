@@ -7,6 +7,7 @@ import com.gizmodata.quack.jdbc.transport.QuackUri;
 import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.sql.SQLNonTransientConnectionException;
 import java.sql.Statement;
 
 public final class QuackConnection extends SkeletalConnection {
@@ -189,6 +190,14 @@ public final class QuackConnection extends SkeletalConnection {
     private void checkOpen() throws SQLException {
         if (closed) {
             throw new SQLException("Connection is closed");
+        }
+        try {
+            session.checkUsable();
+        } catch (QuackException e) {
+            if (session.isInvalidated()) {
+                throw new SQLNonTransientConnectionException(e.getMessage(), "08006", e);
+            }
+            throw new SQLException(e.getMessage(), e);
         }
     }
 }

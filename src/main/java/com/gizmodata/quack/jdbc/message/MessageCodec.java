@@ -10,7 +10,9 @@ import com.gizmodata.quack.jdbc.type.LogicalType;
 import com.gizmodata.quack.jdbc.type.LogicalTypeCodec;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 public final class MessageCodec {
@@ -210,6 +212,17 @@ public final class MessageCodec {
                 if (m.message() != null && !m.message().isEmpty()) {
                     obj.writeField(1, () -> obj.writeString(m.message()));
                 }
+                if (protocolVersion == 3) {
+                    writeOptionalString(obj, 2, Optional.of(m.exceptionType()));
+                    if (!m.extraInfo().isEmpty()) {
+                        obj.writeField(3, () -> obj.writeList(new ArrayList<>(m.extraInfo().entrySet()),
+                                (entry, i) -> obj.writeObject(pair -> {
+                                    pair.writeField(0, () -> pair.writeString(entry.getKey()));
+                                    pair.writeField(1, () -> pair.writeString(entry.getValue()));
+                                })));
+                    }
+                    if (m.mustInvalidate()) obj.writeField(4, () -> obj.writeBool(true));
+                }
             });
             return;
         }
@@ -313,16 +326,22 @@ public final class MessageCodec {
                 // v3 can report an error before version negotiation (notably
                 // the missing heartbeat lease). Consume its typed diagnostics
                 // even when this connection is still decoding as v1.
-                reader.readOptionalField(2, reader::readString, "");
-                reader.readOptionalField(3, () -> reader.readList(i -> {
-                    return reader.readObject(() -> {
-                        reader.readRequiredField(0, reader::readString);
-                        reader.readRequiredField(1, reader::readString);
+                String exceptionType = reader.readOptionalField(2, reader::readString, "");
+                Map<String, String> extraInfo = reader.readOptionalField(3, () -> {
+                    reader.reserve(64);
+                    Map<String, String> entries = new LinkedHashMap<>();
+                    reader.readList(i -> reader.readObject(() -> {
+                        // Account for the map, its immutable copy, and temporary entry storage.
+                        reader.reserve(128);
+                        String key = reader.readRequiredField(0, reader::readString);
+                        String value = reader.readRequiredField(1, reader::readString);
+                        entries.put(key, value);
                         return 0;
-                    });
-                }), List.of());
-                reader.readOptionalField(4, reader::readBool, false);
-                return new QuackMessage.ErrorResponse(header, message);
+                    }));
+                    return entries;
+                }, Map.of());
+                boolean mustInvalidate = reader.readOptionalField(4, reader::readBool, false);
+                return new QuackMessage.ErrorResponse(header, message, exceptionType, extraInfo, mustInvalidate);
             });
             case INVALID -> throw new QuackProtocolException(
                     "Cannot decode message type " + header.type());

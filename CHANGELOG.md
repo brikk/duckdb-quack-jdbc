@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Honor Quack v3's `must_invalidate` error flag: invalidate the affected session,
+  stop heartbeats, and reject subsequent requests locally without reconnecting
+  or retrying SQL. Closing an invalidated connection remains local and idempotent.
+  Preserve the server's exception type and extra diagnostic information in
+  `QuackServerException`; legacy and ordinary query errors remain recoverable.
+
 ## [0.9.0] — 2026-10-21
 
 ### Testing

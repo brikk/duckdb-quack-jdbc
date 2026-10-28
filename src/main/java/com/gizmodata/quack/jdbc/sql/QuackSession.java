@@ -43,8 +43,9 @@ public final class QuackSession implements AutoCloseable {
     private volatile String connectionId;
     private volatile Optional<String> serverDuckdbVersion = Optional.empty();
     private volatile long protocolVersion = QuackConstants.QUACK_VERSION;
-    private ScheduledExecutorService heartbeat;
+    private volatile ScheduledExecutorService heartbeat;
     private volatile RuntimeException heartbeatFailure;
+    private volatile QuackServerException invalidationFailure;
     private volatile boolean closed;
 
     public QuackSession(QuackUri uri, QuackTransport transport) {
@@ -104,6 +105,40 @@ public final class QuackSession implements AutoCloseable {
         return closed;
     }
 
+    /** The server explicitly reported that its database can no longer serve this session. */
+    public boolean isInvalidated() {
+        return invalidationFailure != null;
+    }
+
+    void checkUsable() {
+        if (closed) throw new QuackProtocolException("Session is closed");
+        if (invalidationFailure != null) {
+            throw new QuackException("The Quack server invalidated its database; close this connection "
+                    + "and reconnect after the server is restarted", invalidationFailure);
+        }
+        if (heartbeatFailure != null) throw heartbeatFailure;
+    }
+
+    private QuackMessage send(QuackMessage request) {
+        checkUsable();
+        try {
+            QuackMessage response = transport.send(request);
+            // Custom transports may return errors rather than throw them like the HTTP transport.
+            if (response instanceof QuackMessage.ErrorResponse error) {
+                throw new QuackServerException(error.message(), error.exceptionType(),
+                        error.extraInfo(), error.mustInvalidate());
+            }
+            return response;
+        } catch (QuackServerException e) {
+            if (e.mustInvalidate()) {
+                invalidationFailure = e;
+                ScheduledExecutorService currentHeartbeat = heartbeat;
+                if (currentHeartbeat != null) currentHeartbeat.shutdown();
+            }
+            throw e;
+        }
+    }
+
     private void handshake() {
         // A v1 server cannot deserialize the v3-only heartbeat field. Probe with
         // the shared v1 envelope first; a v3 server explicitly requests a lease.
@@ -111,7 +146,7 @@ public final class QuackSession implements AutoCloseable {
         try {
             connResp = connectRequest(false);
         } catch (QuackServerException e) {
-            if (!e.getMessage().contains("heartbeat_timeout out of range")) throw e;
+            if (e.mustInvalidate() || !e.getMessage().contains("heartbeat_timeout out of range")) throw e;
             connResp = connectRequest(true);
         }
         long selected = connResp.quackVersion().orElse(QuackConstants.QUACK_VERSION);
@@ -141,7 +176,7 @@ public final class QuackSession implements AutoCloseable {
                 Optional.of(QuackConstants.QUACK_VERSION),
                 Optional.of(QuackConstants.LATEST_QUACK_VERSION),
                 Optional.empty(), v3 ? Optional.of(60L) : Optional.empty());
-        QuackMessage response = transport.send(request);
+        QuackMessage response = send(request);
         if (!(response instanceof QuackMessage.ConnectionResponse connResp)) {
             throw new QuackProtocolException(
                     "Expected CONNECTION_RESPONSE, got " + response.getClass().getSimpleName());
@@ -156,24 +191,25 @@ public final class QuackSession implements AutoCloseable {
             thread.setDaemon(true);
             return thread;
         });
-        heartbeat.scheduleWithFixedDelay(() -> {
-            if (!closed && heartbeatFailure == null) {
-                try {
-                    QuackMessage response = transport.send(new QuackMessage.HeartbeatRequest(
-                            MessageHeader.of(MessageType.HEARTBEAT_REQUEST)
-                                    .withConnectionId(connectionId).withClientQueryId(nextQueryId())));
-                    if (!(response instanceof QuackMessage.SuccessResponse)) {
-                        heartbeatFailure = new QuackProtocolException("Unexpected heartbeat response: "
-                                + response.getClass().getSimpleName());
-                    }
-                } catch (QuackServerException e) {
-                    heartbeatFailure = e;
-                } catch (RuntimeException e) {
-                    // A transient heartbeat failure does not prove the lease expired;
-                    // the next request or heartbeat will report the server's verdict.
-                }
+        heartbeat.scheduleWithFixedDelay(this::sendHeartbeat, interval, interval, TimeUnit.SECONDS);
+    }
+
+    void sendHeartbeat() {
+        if (closed || heartbeatFailure != null || isInvalidated()) return;
+        try {
+            QuackMessage response = send(new QuackMessage.HeartbeatRequest(
+                    MessageHeader.of(MessageType.HEARTBEAT_REQUEST)
+                            .withConnectionId(connectionId).withClientQueryId(nextQueryId())));
+            if (!(response instanceof QuackMessage.SuccessResponse)) {
+                heartbeatFailure = new QuackProtocolException("Unexpected heartbeat response: "
+                        + response.getClass().getSimpleName());
             }
-        }, interval, interval, TimeUnit.SECONDS);
+        } catch (QuackServerException e) {
+            heartbeatFailure = e;
+        } catch (RuntimeException e) {
+            // A transient heartbeat failure does not prove the lease expired;
+            // the next request or heartbeat will report the server's verdict.
+        }
     }
 
     /**
@@ -187,10 +223,7 @@ public final class QuackSession implements AutoCloseable {
     }
 
     private Cursor cursor(String sql, Optional<Long> inlineRows) {
-        if (heartbeatFailure != null) throw heartbeatFailure;
-        if (closed) {
-            throw new QuackProtocolException("Session is closed");
-        }
+        checkUsable();
         QuackMessage.PrepareRequest request = new QuackMessage.PrepareRequest(
                 MessageHeader.of(MessageType.PREPARE_REQUEST)
                         .withConnectionId(connectionId)
@@ -200,7 +233,7 @@ public final class QuackSession implements AutoCloseable {
                 // distinguish DML counts from result sets and surface errors.
                 // v3 counts entire batches, so this is not a strict row cap.
                 protocolVersion == 3 && inlineRows.isEmpty() ? Optional.of(2048L) : inlineRows);
-        QuackMessage response = transport.send(request);
+        QuackMessage response = send(request);
         if (!(response instanceof QuackMessage.PrepareResponse prep)) {
             throw new QuackProtocolException(
                     "Expected PREPARE_RESPONSE, got " + response.getClass().getSimpleName());
@@ -227,10 +260,7 @@ public final class QuackSession implements AutoCloseable {
      * {@code PreparedStatement.executeBatch()}.
      */
     public void appendChunk(String schema, String tableName, DataChunk chunk) {
-        if (heartbeatFailure != null) throw heartbeatFailure;
-        if (closed) {
-            throw new QuackProtocolException("Session is closed");
-        }
+        checkUsable();
         if (tableName == null || tableName.isEmpty()) {
             throw new QuackProtocolException("appendChunk: tableName is required");
         }
@@ -255,7 +285,7 @@ public final class QuackSession implements AutoCloseable {
                 Optional.ofNullable(schema),
                 tableName,
                 chunk);
-        QuackMessage response = transport.send(request);
+        QuackMessage response = send(request);
         if (!(response instanceof QuackMessage.SuccessResponse)) {
             throw new QuackProtocolException(
                     "Expected SUCCESS_RESPONSE for APPEND, got "
@@ -311,7 +341,7 @@ public final class QuackSession implements AutoCloseable {
         // Zero inline rows lets PREPARE return once the stream is bound,
         // rather than blocking until SEND_DATA has supplied the first batch.
         try (Cursor result = cursor(sql, Optional.of(0L))) {
-            QuackMessage response = transport.send(new QuackMessage.SendDataRequest(
+            QuackMessage response = send(new QuackMessage.SendDataRequest(
                     MessageHeader.of(MessageType.SEND_DATA_REQUEST)
                             .withConnectionId(connectionId).withClientQueryId(nextQueryId()),
                     streamId, List.of(sendChunk), Optional.of(1L), Optional.empty()));
@@ -319,7 +349,7 @@ public final class QuackSession implements AutoCloseable {
                 throw new QuackProtocolException("Expected SEND_DATA_RESPONSE, got "
                         + response.getClass().getSimpleName());
             }
-            response = transport.send(new QuackMessage.SendDataRequest(
+            response = send(new QuackMessage.SendDataRequest(
                     MessageHeader.of(MessageType.SEND_DATA_REQUEST)
                             .withConnectionId(connectionId).withClientQueryId(nextQueryId()),
                     streamId, List.of(), Optional.empty(), Optional.of(1L)));
@@ -400,7 +430,7 @@ public final class QuackSession implements AutoCloseable {
     @Override
     public synchronized void close() {
         if (heartbeat != null) heartbeat.shutdownNow();
-        if (closed || connectionId == null) {
+        if (closed || connectionId == null || isInvalidated()) {
             closed = true;
             return;
         }
@@ -422,14 +452,13 @@ public final class QuackSession implements AutoCloseable {
     }
 
     private List<DataChunk> fetchMoreChunks(HugeIntParts resultUuid, FetchState state) {
-        if (heartbeatFailure != null) throw heartbeatFailure;
         long batchIndex = protocolVersion == 3 ? state.nextBatchIndex : 0;
         QuackMessage.FetchRequest fetch = new QuackMessage.FetchRequest(
                 MessageHeader.of(MessageType.FETCH_REQUEST)
                         .withConnectionId(connectionId)
                         .withClientQueryId(nextQueryId()),
                 resultUuid, batchIndex, batchIndex > 1 ? batchIndex - 1 : 0);
-        QuackMessage fr = transport.send(fetch);
+        QuackMessage fr = send(fetch);
         if (!(fr instanceof QuackMessage.FetchResponse fetchResp)) {
             throw new QuackProtocolException(
                     "Expected FETCH_RESPONSE, got " + fr.getClass().getSimpleName());

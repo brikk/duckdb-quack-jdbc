@@ -8,7 +8,9 @@ import com.gizmodata.quack.jdbc.type.LogicalType;
 import com.gizmodata.quack.jdbc.type.LogicalTypeId;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -65,6 +67,42 @@ class VersionedMessageCodecTest {
         var error = assertInstanceOf(QuackMessage.ErrorResponse.class,
                 MessageCodec.decode(wire.toByteArray()));
         assertEquals("heartbeat_timeout out of range", error.message());
+        assertEquals("Invalid Input", error.exceptionType());
+        assertEquals(Map.of("detail", "value"), error.extraInfo());
+        assertTrue(error.mustInvalidate());
+    }
+
+    @Test
+    void v3ErrorMetadataRoundTripsAndLegacyErrorsKeepSafeDefaults() {
+        var header = MessageHeader.of(MessageType.ERROR_RESPONSE);
+        for (boolean mustInvalidate : List.of(false, true)) {
+            var error = new QuackMessage.ErrorResponse(header, "server error", "IO",
+                    Map.of("detail", "failure", "original_exception_type", "Fatal"), mustInvalidate);
+            assertEquals(error, MessageCodec.decode(MessageCodec.encode(error, 3), DecodeLimits.DEFAULT, 3));
+            // A v3 error can arrive before the negotiated version is known.
+            assertEquals(error, MessageCodec.decode(MessageCodec.encode(error, 3)));
+            assertEquals(new QuackMessage.ErrorResponse(header, "server error"),
+                    MessageCodec.decode(MessageCodec.encode(error, 1)));
+        }
+        var legacy = new QuackMessage.ErrorResponse(header, "legacy error");
+        var decoded = assertInstanceOf(QuackMessage.ErrorResponse.class,
+                MessageCodec.decode(MessageCodec.encode(legacy), DecodeLimits.DEFAULT, 3));
+        assertEquals("", decoded.exceptionType());
+        assertEquals(Map.of(), decoded.extraInfo());
+        assertFalse(decoded.mustInvalidate());
+
+        var flagOnly = new QuackMessage.ErrorResponse(header, "database gone", "", Map.of(), true);
+        assertEquals(flagOnly, MessageCodec.decode(MessageCodec.encode(flagOnly, 3)));
+    }
+
+    @Test
+    void errorMetadataIsDefensivelyCopied() {
+        Map<String, String> info = new HashMap<>(Map.of("detail", "original"));
+        var error = new QuackMessage.ErrorResponse(MessageHeader.of(MessageType.ERROR_RESPONSE),
+                "error", "IO", info, true);
+        info.put("detail", "changed");
+        assertEquals(Map.of("detail", "original"), error.extraInfo());
+        assertThrows(UnsupportedOperationException.class, () -> error.extraInfo().put("key", "value"));
     }
 
     @Test

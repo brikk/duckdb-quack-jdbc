@@ -210,6 +210,18 @@ default limits. Low-level callers can supply a `DecodeLimits` to
 constructor. Fully custom transports must enforce their own body limit and
 pass `uri.decodeLimits()` to decoding if they want connection overrides.
 
+### Server database invalidation
+
+When a Quack v3 error explicitly sets `must_invalidate`, the driver marks that
+session unusable and stops its heartbeats. Subsequent server operations fail
+locally; `Connection.isValid(...)` returns `false` without a network probe.
+The driver does not reconnect or replay SQL. Close the connection and open a
+new one after the server is restarted. `isClosed()` still reflects explicit
+closure, not invalidation; closing an invalidated connection sends no request.
+Ordinary query errors and legacy errors without the flag do not invalidate
+the session. The original `QuackServerException` (retained in the JDBC cause chain)
+retains `getExceptionType()`, `getExtraInfo()`, and `mustInvalidate()`.
+
 ### Safer token configuration
 
 For desktop tools such as DataGrip, avoid putting `token=...` directly

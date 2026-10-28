@@ -4,6 +4,7 @@ import com.gizmodata.quack.jdbc.codec.HugeIntParts;
 import com.gizmodata.quack.jdbc.type.LogicalType;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 public sealed interface QuackMessage {
@@ -86,5 +87,14 @@ public sealed interface QuackMessage {
 
     record DisconnectMessage(MessageHeader header) implements QuackMessage {}
 
-    record ErrorResponse(MessageHeader header, String message) implements QuackMessage {}
+    record ErrorResponse(MessageHeader header, String message, String exceptionType,
+                         Map<String, String> extraInfo, boolean mustInvalidate) implements QuackMessage {
+        public ErrorResponse {
+            extraInfo = Map.copyOf(extraInfo);
+        }
+
+        public ErrorResponse(MessageHeader header, String message) {
+            this(header, message, "", Map.of(), false);
+        }
+    }
 }

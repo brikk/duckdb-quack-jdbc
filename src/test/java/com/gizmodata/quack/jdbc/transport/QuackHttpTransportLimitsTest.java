@@ -260,6 +260,28 @@ class QuackHttpTransportLimitsTest {
                 () -> transport(client, DecodeLimits.DEFAULT).send(REQUEST));
 
         assertEquals("query failed", error.getMessage());
+        assertEquals("", error.getExceptionType());
+        assertEquals(Map.of(), error.getExtraInfo());
+        assertFalse(error.mustInvalidate());
+        assertTrue(client.body.closed);
+        assertEquals(1, client.sends);
+    }
+
+    @Test
+    void invalidatingErrorPreservesMetadataAndClosesBodyWithoutReplay() {
+        StubClient client = new StubClient(MessageCodec.encode(new QuackMessage.ErrorResponse(
+                MessageHeader.of(MessageType.ERROR_RESPONSE), "database failed", "Fatal",
+                Map.of("detail", "checkpoint"), true), 3));
+
+        // This transport has not selected v3 yet: fatal connect errors must still retain the flag.
+        QuackServerException error = assertThrows(QuackServerException.class,
+                () -> transport(client, DecodeLimits.DEFAULT).send(REQUEST));
+
+        assertEquals("database failed", error.getServerMessage());
+        assertEquals("Fatal", error.getExceptionType());
+        assertEquals(Map.of("detail", "checkpoint"), error.getExtraInfo());
+        assertTrue(error.mustInvalidate());
+        assertThrows(UnsupportedOperationException.class, () -> error.getExtraInfo().put("key", "value"));
         assertTrue(client.body.closed);
         assertEquals(1, client.sends);
     }
