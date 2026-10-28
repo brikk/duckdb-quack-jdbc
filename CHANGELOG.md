@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-10-28
+
 ### Fixed
 
 - Honor Quack v3's `must_invalidate` error flag: invalidate the affected session,
@@ -13,6 +15,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   or retrying SQL. Closing an invalidated connection remains local and idempotent.
   Preserve the server's exception type and extra diagnostic information in
   `QuackServerException`; legacy and ordinary query errors remain recoverable.
+
+### Testing
+
+- Full version-matched oracle suites pass against released DuckDB 1.5.6/v1
+  and 2.0.0/v3 with signed core extensions: 680 tests each, zero failures or
+  errors, and three known optional/environment skips. No required integration
+  test was skipped. New regressions cover invalidation during handshake,
+  PREPARE, FETCH, APPEND, SEND_DATA, and heartbeats, including real HTTP and
+  custom transports, while preserving ordinary-error recovery.
 
 ## [0.9.0] — 2026-10-21
 
