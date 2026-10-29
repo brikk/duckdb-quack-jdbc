@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-10-29
+
 ### Added
 
 - Actual Quack v3 statement cancellation using message 12 and the owning query's
@@ -30,6 +32,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   If cancellation cannot be confirmed (including the pinned server's early-UUID
   startup race), the session closes explicitly rather than claiming success or
   replaying SQL. Server `must_invalidate` and caller-managed transactions are retained.
+
+### Testing
+
+- Full version-matched oracle suites pass on Java 17 against released DuckDB
+  1.5.6/v1 and 2.0.0/v3 with signed core extensions: 698 tests each, zero failures
+  or errors, and three known optional/environment skips. All 16 required
+  integration classes ran. DuckBridge dependency adoption and its strict
+  compressed-range streaming gate remain separate qualification work.
 
 ## [0.10.0] — 2026-10-28
 

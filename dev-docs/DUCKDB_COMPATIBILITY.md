@@ -234,11 +234,13 @@ JDBC `getObject()` results for every logical type.
 
 The starting runtime is published `dev.brikk.duckdb:quack-jdbc:0.10.0`
 (`v0.10.0`, `087a667`); `main` subsequently changed only the development version
-to `0.11.0-SNAPSHOT`. The follow-up is on `fix/quack-lifecycle-nanos`.
-The proposed next release is **0.11.0**, not a published artifact. No release,
-tag, deployment, `mvn install`, DuckBridge dependency substitution, or DuckBridge
-checkout change was made. The release profile's automatic publishing is unchanged.
-The final source commit is supplied in the accompanying handoff reply.
+to `0.11.0-SNAPSHOT`. The follow-up was prepared on `fix/quack-lifecycle-nanos`
+at `104d1fc0f0597050bd738e705eb7c3be7aa5816c`, without publication or DuckBridge
+changes. After reviewing this handoff, the user authorized **0.11.0** for release
+on 2026-10-29. Release preparation is on `release/v0.11.0`; the `v0.11.0` tag
+uses the existing signed-server CI gates and automatic Maven Central publication.
+DuckBridge adoption remains separate work: no dependency substitution,
+`mvn install`, or DuckBridge checkout change is part of this driver release.
 
 ### Implemented behavior
 
@@ -372,4 +374,5 @@ server/network cannot answer; ambiguous cancellation closes rather than promises
 reuse. General JDBC query/network deadlines and whole-body query deadlines remain
 separate work. Timestamp parameter interpolation retains existing microsecond
 precision; exact nanosecond APPEND/reads do not imply nanosecond prepared binding.
-No Maven Central or GitHub publication has been performed for this follow-up.
+The later authorization to release 0.11.0 does not certify DuckBridge adoption
+or change these verification boundaries.
