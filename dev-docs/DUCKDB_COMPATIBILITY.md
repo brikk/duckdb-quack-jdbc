@@ -376,3 +376,19 @@ separate work. Timestamp parameter interpolation retains existing microsecond
 precision; exact nanosecond APPEND/reads do not imply nanosecond prepared binding.
 The later authorization to release 0.11.0 does not certify DuckBridge adoption
 or change these verification boundaries.
+
+### 0.11.0 publication confirmation
+
+The `v0.11.0` release tag points to `60a6367592a9bb1f9371a806f9ab058e961a2241`.
+[Release CI](https://github.com/brikk/duckdb-quack-jdbc/actions/runs/40964438288)
+passed both Java 17 signed-server oracle profiles: **698 tests each, zero
+failures/errors, one optional external-preview skip**. Both integration report
+gates passed 16/16 classes and 50 total reports; no required integration test
+was skipped. The two local IPv6/address-dependent skips did not occur in CI.
+
+The automatic Central deployment reached **published** on 2026-10-29, and the
+public Maven repository's POM and JAR were retrieved and verified as
+`dev.brikk.duckdb:quack-jdbc:0.11.0`. The matching
+[GitHub release](https://github.com/brikk/duckdb-quack-jdbc/releases/tag/v0.11.0)
+includes binary, sources, Javadoc, and checksum assets. DuckBridge was not
+modified; its adoption of this driver remains separate qualification work.
