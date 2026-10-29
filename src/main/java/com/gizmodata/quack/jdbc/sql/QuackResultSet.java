@@ -1,5 +1,6 @@
 package com.gizmodata.quack.jdbc.sql;
 
+import com.gizmodata.quack.jdbc.QuackCancelledException;
 import com.gizmodata.quack.jdbc.message.DataChunk;
 import com.gizmodata.quack.jdbc.message.DecodedVector;
 import com.gizmodata.quack.jdbc.type.ChildType;
@@ -75,6 +76,7 @@ public final class QuackResultSet extends SkeletalResultSet {
     @Override
     public boolean next() throws SQLException {
         checkOpen();
+        checkCancelled();
         if (exhausted) return false;
         int nextRow = rowInChunk + 1;
         while (currentChunk == null || nextRow >= currentChunk.rowCount()) {
@@ -87,7 +89,8 @@ public final class QuackResultSet extends SkeletalResultSet {
                 // Keep the ResultSet open but exhausted until explicit close().
                 exhausted = true;
                 cursor.close();
-                throw new SQLException("Failed to fetch result rows: " + e.getMessage(), e);
+                throw new SQLException("Failed to fetch result rows: " + e.getMessage(),
+                        e instanceof QuackCancelledException ? "57014" : null, e);
             }
             if (currentChunk == null) {
                 exhausted = true;
@@ -144,6 +147,7 @@ public final class QuackResultSet extends SkeletalResultSet {
 
     private Object rawValue(int columnIndex) throws SQLException {
         checkOpen();
+        checkCancelled();
         if (columnIndex < 1 || columnIndex > columnNames.size()) {
             throw new SQLException("Column index out of range: " + columnIndex);
         }
@@ -461,5 +465,17 @@ public final class QuackResultSet extends SkeletalResultSet {
 
     private void checkOpen() throws SQLException {
         if (closed) throw new SQLException("ResultSet is closed");
+    }
+
+    private void checkCancelled() throws SQLException {
+        try {
+            cursor.checkCancelled();
+        } catch (QuackCancelledException e) {
+            currentChunk = null;
+            rowInChunk = -1;
+            exhausted = true;
+            cursor.close();
+            throw new SQLException(e.getMessage(), "57014", e);
+        }
     }
 }

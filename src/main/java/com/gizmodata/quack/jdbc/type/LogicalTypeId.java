@@ -31,6 +31,7 @@ public enum LogicalTypeId {
     UINTEGER(30),
     UBIGINT(31),
     TIMESTAMP_TZ(32),
+    TIMESTAMP_TZ_NS(33),
     TIME_TZ(34),
     TIME_NS(35),
     BIT(36),

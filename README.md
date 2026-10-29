@@ -222,6 +222,29 @@ Ordinary query errors and legacy errors without the flag do not invalidate
 the session. The original `QuackServerException` (retained in the JDBC cause chain)
 retains `getExceptionType()`, `getExtraInfo()`, and `mustInvalidate()`.
 
+### Unreleased lifecycle changes (proposed 0.11.0)
+
+These changes are **not in published 0.10.0**:
+
+- `Statement.cancel()` sends a UUID-targeted Quack v3 CANCEL concurrently with
+  PREPARE/FETCH. Cancelled execution and result consumption fail with SQL state
+  `57014`, including already-buffered rows. Cancelling an older statement cannot
+  cancel a newer one. v1 explicitly reports unsupported cancellation.
+- If cancellation cannot be confirmed, the session is closed, not reconnected.
+  This includes a pinned-server race when CANCEL arrives before PREPARE installs
+  its UUID. Confirmed cancellation normally permits reuse, but transaction commit
+  or rollback remains the caller's responsibility. Concurrent execution of multiple
+  statements on one connection is not a general thread-safety guarantee.
+- v3 requests one initial batch using an inline-row hint of `1`. The server counts
+  actual rows but drains whole batches before checking the hint. A compressed range
+  can still fit millions of rows into one batch; use the server's
+  `quack_target_batch_bytes` setting when smaller wire batches are required.
+  The driver neither changes that setting implicitly nor raises decode limits.
+- Close stops heartbeats and spends at most approximately two seconds on DISCONNECT,
+  including response-body consumption, independently of the general query timeout.
+  No teardown retry is made. A custom transport must honor interruption to release
+  its underlying I/O; the driver's teardown worker is daemonized.
+
 ### Safer token configuration
 
 For desktop tools such as DataGrip, avoid putting `token=...` directly
@@ -448,6 +471,12 @@ GizmoData roadmap.
   caller-managed transaction behavior.
 
 ### Calendar-aware temporal values
+
+Unreleased `TIMESTAMPTZ_NS` support returns exact UTC `OffsetDateTime` values and
+reports `TIMESTAMPTZ_NS` / `Types.TIMESTAMP_WITH_TIMEZONE` metadata with scale 9.
+Negative nanoseconds, NULLs, finite int64 endpoints, and binary APPEND are supported;
+infinities fail explicitly, as with other temporal types. This does not change the
+existing microsecond precision of interpolated prepared timestamp literals.
 
 Timestamp APPEND checks the final wire-unit value rather than an intermediate
 seconds product. It rejects overflow and infinity-sentinel collisions while

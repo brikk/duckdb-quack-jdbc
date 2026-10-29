@@ -562,10 +562,14 @@ public class JdbcCoverageIntegrationTest {
     }
 
     @Test
-    void preparedStatementCancelDoesNotThrow() throws Exception {
+    void preparedStatementIdleCancelReportsNegotiatedSupport() throws Exception {
         try (Connection c = connect();
              PreparedStatement p = c.prepareStatement("SELECT 1")) {
-            assertDoesNotThrow(p::cancel);
+            if (c.unwrap(com.gizmodata.quack.jdbc.sql.QuackConnection.class).session().protocolVersion() == 3) {
+                assertDoesNotThrow(p::cancel);
+            } else {
+                assertThrows(java.sql.SQLFeatureNotSupportedException.class, p::cancel);
+            }
         }
     }
 

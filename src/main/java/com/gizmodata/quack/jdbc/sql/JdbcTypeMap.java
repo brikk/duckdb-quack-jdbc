@@ -29,7 +29,7 @@ public final class JdbcTypeMap {
             case DATE -> Types.DATE;
             case TIME, TIME_NS, TIME_TZ -> Types.TIME;
             case TIMESTAMP, TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP_NS -> Types.TIMESTAMP;
-            case TIMESTAMP_TZ -> Types.TIMESTAMP_WITH_TIMEZONE;
+            case TIMESTAMP_TZ, TIMESTAMP_TZ_NS -> Types.TIMESTAMP_WITH_TIMEZONE;
             case INTERVAL -> Types.OTHER;
             case UUID -> Types.OTHER;
             case ENUM -> Types.OTHER;
@@ -78,6 +78,7 @@ public final class JdbcTypeMap {
             case TIMESTAMP_MS -> "TIMESTAMP_MS";
             case TIMESTAMP_NS -> "TIMESTAMP_NS";
             case TIMESTAMP_TZ -> "TIMESTAMPTZ";
+            case TIMESTAMP_TZ_NS -> "TIMESTAMPTZ_NS";
             case INTERVAL -> "INTERVAL";
             case UUID -> "UUID";
             case ENUM -> nested ? enumTypeName(type) : "ENUM";
@@ -167,6 +168,7 @@ public final class JdbcTypeMap {
             case DATE -> 10;
             case TIME, TIME_NS, TIME_TZ -> 18;
             case TIMESTAMP, TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP_NS, TIMESTAMP_TZ -> 29;
+            case TIMESTAMP_TZ_NS -> 35;
             case UUID -> 36;
             default -> Integer.MAX_VALUE;
         };
@@ -183,6 +185,7 @@ public final class JdbcTypeMap {
             case HUGEINT, UHUGEINT -> 39;
             case FLOAT -> 7;
             case DOUBLE -> 15;
+            case TIMESTAMP_TZ_NS -> 35;
             case DECIMAL -> type.typeInfo().filter(i -> i instanceof ExtraTypeInfo.Decimal)
                     .map(i -> (ExtraTypeInfo.Decimal) i)
                     .map(ExtraTypeInfo.Decimal::width)
@@ -192,6 +195,7 @@ public final class JdbcTypeMap {
     }
 
     public static int scale(LogicalType type) {
+        if (type.id() == LogicalTypeId.TIMESTAMP_TZ_NS) return 9;
         if (type.id() == LogicalTypeId.DECIMAL) {
             return type.typeInfo().filter(i -> i instanceof ExtraTypeInfo.Decimal)
                     .map(i -> (ExtraTypeInfo.Decimal) i)

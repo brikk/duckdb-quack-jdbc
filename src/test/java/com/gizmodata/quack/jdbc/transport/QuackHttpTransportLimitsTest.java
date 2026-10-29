@@ -58,8 +58,8 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 @Timeout(10)
 class QuackHttpTransportLimitsTest {
     private static final URI ENDPOINT = URI.create("http://localhost:9494/quack");
-    private static final QuackMessage REQUEST = new QuackMessage.DisconnectMessage(
-            MessageHeader.of(MessageType.DISCONNECT_MESSAGE).withClientQueryId(1));
+    private static final QuackMessage REQUEST = new QuackMessage.PrepareRequest(
+            MessageHeader.of(MessageType.PREPARE_REQUEST).withClientQueryId(1), "SELECT 1");
     private static final QuackMessage SUCCESS = new QuackMessage.SuccessResponse(
             MessageHeader.of(MessageType.SUCCESS_RESPONSE).withClientQueryId(1));
 
@@ -372,6 +372,24 @@ class QuackHttpTransportLimitsTest {
 
         assertEquals(2, client.sends);
         assertTrue(client.body.closed);
+    }
+
+    @Test
+    void controlMessagesHaveNoAddressReplayAndOnlyDisconnectGetsAShorterTimeout() {
+        for (IOException failure : List.of(new ConnectException("unavailable"), new ClosedChannelException())) {
+            for (QuackMessage control : List.of(
+                    new QuackMessage.DisconnectMessage(MessageHeader.of(MessageType.DISCONNECT_MESSAGE)),
+                    new QuackMessage.CancelRequest(MessageHeader.of(MessageType.CANCEL_REQUEST), new HugeIntParts(0, 7)))) {
+                StubClient client = new StubClient(MessageCodec.encode(SUCCESS));
+                client.sendFailure = failure;
+                QuackHttpTransport transport = new QuackHttpTransport(ENDPOINT, client, Duration.ofSeconds(30));
+                transport.setProtocolVersion(3);
+                assertThrows(QuackException.class, () -> transport.send(control));
+                assertEquals(1, client.sends);
+                assertEquals(Optional.of(Duration.ofSeconds(control instanceof QuackMessage.DisconnectMessage ? 2 : 30)),
+                        client.request.timeout());
+            }
+        }
     }
 
     private static final class TrackedBody extends InputStream {

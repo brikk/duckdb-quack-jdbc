@@ -34,12 +34,14 @@ import java.util.Optional;
  * returns the decoded server response (or raises a
  * {@link QuackServerException} for {@code ERROR_RESPONSE}).
  *
- * <p>For plain HTTP endpoints, every address returned by
+ * <p>For query requests to plain HTTP endpoints, every address returned by
  * {@link InetAddress#getAllByName(String)} is tried in order. This is
  * essential for hosts like {@code localhost} that resolve to both IPv4
  * and IPv6 — JDK {@link HttpClient} otherwise gives up after the first
  * address fails, even if a server is reachable on one of the other
  * addresses.
+ * CANCEL and DISCONNECT use only one address attempt to avoid replaying an
+ * uncertain control operation.
  *
  * <p>HTTPS endpoints keep the original hostname. Replacing the URI host
  * with a resolved IP address breaks TLS SNI and hostname verification.
@@ -48,6 +50,7 @@ public final class QuackHttpTransport implements QuackTransport {
 
     public static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(10);
     public static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(60);
+    public static final Duration DEFAULT_DISCONNECT_TIMEOUT = Duration.ofSeconds(2);
 
     private final URI endpoint;
     private final HttpClient httpClient;
@@ -105,12 +108,17 @@ public final class QuackHttpTransport implements QuackTransport {
     @Override
     public QuackMessage send(QuackMessage request) {
         byte[] body = MessageCodec.encode(request, protocolVersion);
+        boolean disconnect = request instanceof QuackMessage.DisconnectMessage;
+        boolean control = disconnect || request instanceof QuackMessage.CancelRequest;
+        Duration timeout = disconnect && requestTimeout.compareTo(DEFAULT_DISCONNECT_TIMEOUT) > 0
+                ? DEFAULT_DISCONNECT_TIMEOUT : requestTimeout;
 
         URI[] attempts = endpointCandidates();
+        if (control && attempts.length > 1) attempts = Arrays.copyOf(attempts, 1);
         IOException lastFailure = null;
         for (URI attempt : attempts) {
             HttpRequest.Builder builder = HttpRequest.newBuilder(attempt)
-                    .timeout(requestTimeout);
+                    .timeout(timeout);
             // Extra headers first, protocol headers second: Content-Type
             // and Accept must win (QuackUri validation also rejects them).
             for (Map.Entry<String, String> header : extraHeaders.entrySet()) {

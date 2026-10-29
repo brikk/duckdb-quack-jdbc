@@ -82,8 +82,8 @@ class QuackHttpTransportTest {
     }
 
     private static QuackMessage probe(QuackHttpTransport transport) {
-        return transport.send(new QuackMessage.DisconnectMessage(
-                MessageHeader.of(MessageType.DISCONNECT_MESSAGE).withClientQueryId(1)));
+        return transport.send(new QuackMessage.PrepareRequest(
+                MessageHeader.of(MessageType.PREPARE_REQUEST).withClientQueryId(1), "SELECT 1"));
     }
 
     @Test

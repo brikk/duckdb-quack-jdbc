@@ -82,6 +82,7 @@ class QuackProtocolNegotiationTest {
                         assertTrue(prepare.sql().contains("scan_data_from_quack_client"));
                         return prepared(queryUuid, List.of("Count"), true, List.of());
                     }
+                    assertEquals(Optional.of(1L), prepare.inlineRows());
                     return prepared(queryUuid, List.of("value"), true, List.of());
                 }
                 if (request instanceof QuackMessage.FetchRequest fetch) {

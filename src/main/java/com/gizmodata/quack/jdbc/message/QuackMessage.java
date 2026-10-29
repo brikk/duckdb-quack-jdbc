@@ -87,6 +87,8 @@ public sealed interface QuackMessage {
 
     record DisconnectMessage(MessageHeader header) implements QuackMessage {}
 
+    record CancelRequest(MessageHeader header, HugeIntParts queryUuid) implements QuackMessage {}
+
     record ErrorResponse(MessageHeader header, String message, String exceptionType,
                          Map<String, String> extraInfo, boolean mustInvalidate) implements QuackMessage {
         public ErrorResponse {

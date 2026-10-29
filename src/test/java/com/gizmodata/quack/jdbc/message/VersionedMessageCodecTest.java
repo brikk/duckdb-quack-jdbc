@@ -19,6 +19,17 @@ class VersionedMessageCodecTest {
     private static final LogicalType VARCHAR = LogicalType.of(LogicalTypeId.VARCHAR);
 
     @Test
+    void cancelUsesMessage12AndAHugeintQueryUuid() {
+        for (HugeIntParts uuid : List.of(new HugeIntParts(0, 0), new HugeIntParts(-123, 456))) {
+            var message = new QuackMessage.CancelRequest(MessageHeader.of(MessageType.CANCEL_REQUEST)
+                    .withConnectionId("connection"), uuid);
+            assertEquals(12, message.header().type().wireId());
+            assertEquals(message, MessageCodec.decode(MessageCodec.encode(message, 3), DecodeLimits.DEFAULT, 3));
+            assertThrows(QuackProtocolException.class, () -> MessageCodec.encode(message, 1));
+        }
+    }
+
+    @Test
     void v3RawChunksAndNewStringLayoutRoundTrip() {
         DataChunk chunk = new DataChunk(3, List.of(VARCHAR), List.of(
                 new DecodedVector.ObjectVec(VARCHAR, new Object[]{"hello", null, "é"})));

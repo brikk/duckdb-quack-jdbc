@@ -1,12 +1,14 @@
 package com.gizmodata.quack.jdbc.sql;
 
 import com.gizmodata.quack.jdbc.QuackException;
+import com.gizmodata.quack.jdbc.QuackCancelledException;
 import com.gizmodata.quack.jdbc.message.DataChunk;
 import com.gizmodata.quack.jdbc.type.LogicalTypeId;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -18,6 +20,7 @@ public class QuackStatement extends SkeletalStatement {
     private QuackResultSet currentResultSet;
     private int updateCount = -1;
     private boolean closed;
+    private volatile QuackSession.Query activeQuery;
 
     public QuackStatement(QuackConnection connection) {
         this.connection = connection;
@@ -54,11 +57,18 @@ public class QuackStatement extends SkeletalStatement {
     }
 
     @Override
-    public void cancel() {
-        // Quack protocol has no in-flight cancel today. Treat as best-effort
-        // no-op so tools like DBeaver / DataGrip query-timeout buttons don't
-        // see an exception. A real cancel will follow when the protocol
-        // adds support.
+    public void cancel() throws SQLException {
+        checkOpen();
+        if (connection.session().protocolVersion() != 3) {
+            throw new SQLFeatureNotSupportedException("Statement cancellation requires Quack v3");
+        }
+        QuackSession.Query query = activeQuery;
+        if (query == null) return;
+        try {
+            connection.session().cancel(query);
+        } catch (RuntimeException e) {
+            throw new SQLException(e.getMessage(), e);
+        }
     }
 
     @Override
@@ -85,9 +95,12 @@ public class QuackStatement extends SkeletalStatement {
     public boolean execute(String sql) throws SQLException {
         checkOpen();
         resetExecutionState();
-        connection.beginTransactionIfNeeded();
+        QuackSession.Query query = connection.session().newQuery();
+        activeQuery = query;
         try {
-            QuackSession.Cursor cursor = connection.session().cursor(sql);
+            query.checkCancelled();
+            connection.beginTransactionIfNeeded();
+            QuackSession.Cursor cursor = connection.session().cursor(sql, query);
             DataChunk first = cursor.peekFirstChunk();
             if (looksLikeRowsAffected(cursor, first)) {
                 updateCount = extractRowsAffected(first);
@@ -99,10 +112,17 @@ public class QuackStatement extends SkeletalStatement {
             currentResultSet = new QuackResultSet(this, cursor);
             return true;
         } catch (RuntimeException e) {
+            query.done = true;
+            if (e instanceof QuackCancelledException) {
+                throw new SQLException(e.getMessage(), "57014", e);
+            }
             if (e instanceof QuackException) {
                 throw new SQLException(e.getMessage(), e);
             }
             throw new SQLException("Failed to execute SQL: " + sql, e);
+        } catch (SQLException e) {
+            query.done = true;
+            throw e;
         }
     }
 

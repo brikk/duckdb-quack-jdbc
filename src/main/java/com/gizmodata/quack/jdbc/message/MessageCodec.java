@@ -83,6 +83,7 @@ public final class MessageCodec {
         if (message instanceof QuackMessage.AppendRequest) return MessageType.APPEND_REQUEST;
         if (message instanceof QuackMessage.SuccessResponse) return MessageType.SUCCESS_RESPONSE;
         if (message instanceof QuackMessage.DisconnectMessage) return MessageType.DISCONNECT_MESSAGE;
+        if (message instanceof QuackMessage.CancelRequest) return MessageType.CANCEL_REQUEST;
         if (message instanceof QuackMessage.ErrorResponse) return MessageType.ERROR_RESPONSE;
         if (message instanceof QuackMessage.HeartbeatRequest) return MessageType.HEARTBEAT_REQUEST;
         if (message instanceof QuackMessage.SendDataRequest) return MessageType.SEND_DATA_REQUEST;
@@ -199,6 +200,11 @@ public final class MessageCodec {
         if (message instanceof QuackMessage.SendDataResponse m) {
             writer.writeObject(obj -> obj.writeField(1, () -> obj.writeUleb(
                     m.acceptBudget().orElse(QuackConstants.OPTIONAL_INDEX_INVALID))));
+            return;
+        }
+        if (message instanceof QuackMessage.CancelRequest m) {
+            if (protocolVersion != 3) throw new QuackProtocolException("CANCEL requires Quack v3");
+            writer.writeObject(obj -> obj.writeField(1, () -> obj.writeHugeInt(m.queryUuid())));
             return;
         }
         if (message instanceof QuackMessage.SuccessResponse
@@ -320,6 +326,8 @@ public final class MessageCodec {
                     header, optionalIndex(reader, 1)));
             case SUCCESS_RESPONSE -> reader.readObject(() -> new QuackMessage.SuccessResponse(header));
             case DISCONNECT_MESSAGE -> reader.readObject(() -> new QuackMessage.DisconnectMessage(header));
+            case CANCEL_REQUEST -> reader.readObject(() -> new QuackMessage.CancelRequest(
+                    header, reader.readRequiredField(1, reader::readHugeInt)));
             case HEARTBEAT_REQUEST -> reader.readObject(() -> new QuackMessage.HeartbeatRequest(header));
             case ERROR_RESPONSE -> reader.readObject(() -> {
                 String message = reader.readOptionalField(1, reader::readString, "");

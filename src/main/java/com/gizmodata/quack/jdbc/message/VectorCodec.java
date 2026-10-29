@@ -296,7 +296,7 @@ public final class VectorCodec {
         }
         Object[] values = new Object[count];
         boolean temporal = switch (type.id()) {
-            case DATE, TIME, TIME_NS, TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP, TIMESTAMP_NS, TIMESTAMP_TZ -> true;
+            case DATE, TIME, TIME_NS, TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP, TIMESTAMP_NS, TIMESTAMP_TZ, TIMESTAMP_TZ_NS -> true;
             default -> false;
         };
         long current = start;
@@ -565,7 +565,7 @@ public final class VectorCodec {
             case DECIMAL -> 160;
             case UBIGINT -> 512;
             case ENUM -> physical == PhysicalType.INT64 ? 32 : 64;
-            case TIMESTAMP, TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP_NS, TIMESTAMP_TZ -> 384;
+            case TIMESTAMP, TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP_NS, TIMESTAMP_TZ, TIMESTAMP_TZ_NS -> 384;
             default -> 32;
         };
     }
@@ -578,7 +578,7 @@ public final class VectorCodec {
     private static boolean needsObjectMaterialization(LogicalType type, PhysicalType physicalType) {
         return switch (type.id()) {
             case DECIMAL, DATE, TIME, TIME_NS, TIME_TZ,
-                 TIMESTAMP, TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP_NS, TIMESTAMP_TZ,
+                  TIMESTAMP, TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP_NS, TIMESTAMP_TZ, TIMESTAMP_TZ_NS,
                  UUID, INTERVAL, UBIGINT, HUGEINT, UHUGEINT, ENUM -> true;
             default -> physicalType == PhysicalType.INTERVAL
                     || physicalType == PhysicalType.INT128
@@ -657,20 +657,21 @@ public final class VectorCodec {
                 yield LocalTime.ofNanoOfDay(value * scale);
             }
             case TIME_TZ -> value;
-            case TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP, TIMESTAMP_NS, TIMESTAMP_TZ -> {
+            case TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP, TIMESTAMP_NS, TIMESTAMP_TZ, TIMESTAMP_TZ_NS -> {
                 if (value == -Long.MAX_VALUE || value == Long.MAX_VALUE) {
                     throw new QuackUnsupportedTypeException("Infinite " + type.id() + " values are not supported");
                 }
                 long units = switch (type.id()) {
                     case TIMESTAMP_SEC -> 1;
                     case TIMESTAMP_MS -> 1_000;
-                    case TIMESTAMP_NS -> 1_000_000_000;
+                    case TIMESTAMP_NS, TIMESTAMP_TZ_NS -> 1_000_000_000;
                     default -> 1_000_000;
                 };
                 try {
                     Instant instant = Instant.ofEpochSecond(Math.floorDiv(value, units),
                             Math.floorMod(value, units) * (1_000_000_000L / units));
-                    yield type.id() == LogicalTypeId.TIMESTAMP_TZ ? OffsetDateTime.ofInstant(instant, ZoneOffset.UTC)
+                    yield type.id() == LogicalTypeId.TIMESTAMP_TZ || type.id() == LogicalTypeId.TIMESTAMP_TZ_NS
+                            ? OffsetDateTime.ofInstant(instant, ZoneOffset.UTC)
                             : LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
                 } catch (DateTimeException e) {
                     throw new QuackUnsupportedTypeException(type.id() + " value is outside the Java temporal range");
@@ -1071,6 +1072,7 @@ public final class VectorCodec {
             case TIMESTAMP -> instantToTimestamp(((LocalDateTime) value).toInstant(ZoneOffset.UTC), 1_000_000, type);
             case TIMESTAMP_NS -> instantToTimestamp(((LocalDateTime) value).toInstant(ZoneOffset.UTC), 1_000_000_000, type);
             case TIMESTAMP_TZ -> instantToTimestamp(((OffsetDateTime) value).toInstant(), 1_000_000, type);
+            case TIMESTAMP_TZ_NS -> instantToTimestamp(((OffsetDateTime) value).toInstant(), 1_000_000_000, type);
             case TIME_TZ -> ((Number) value).longValue();
             case DECIMAL -> decimalUnscaled(type, value).longValueExact();
             default -> ((Number) value).longValue();

@@ -227,3 +227,149 @@ assert that divergence explicitly in the version-matched oracle test rather
 than copying an upstream JDBC fallback. Full suite success therefore means
 wire/JDBC coverage with this documented exception, **not** identical native
 JDBC `getObject()` results for every logical type.
+
+## Driver Lifecycle and Zoned-Nanosecond Follow-up (2026-10-29)
+
+### Scope and adoption status
+
+The starting runtime is published `dev.brikk.duckdb:quack-jdbc:0.10.0`
+(`v0.10.0`, `087a667`); `main` subsequently changed only the development version
+to `0.11.0-SNAPSHOT`. The follow-up is on `fix/quack-lifecycle-nanos`.
+The proposed next release is **0.11.0**, not a published artifact. No release,
+tag, deployment, `mvn install`, DuckBridge dependency substitution, or DuckBridge
+checkout change was made. The release profile's automatic publishing is unchanged.
+The final source commit is supplied in the accompanying handoff reply.
+
+### Implemented behavior
+
+- **Cancellation:** protocol-v3 message 12, body field 1 containing the owning
+  statement's hugeint query UUID. The statement publishes its token before its
+  PREPARE is sent. CANCEL uses a separate concurrent HTTP request, not an execution
+  lock held by PREPARE/FETCH. A short dispatch gate prevents a new PREPARE from
+  crossing an in-progress CANCEL: the pinned server's UUID check and abort are
+  separate operations. Old statements only cancel their own local buffered rows
+  when a newer query has superseded them; no statement cancellation sends UUID 0.
+- Cancellation raises SQL state **57014**, including buffered-row getters,
+  `ResultSet.next()`, blocked PREPARE, and a successful FETCH reply racing CANCEL.
+  Idle/completed cancellation is a no-op. v1 explicitly throws
+  `SQLFeatureNotSupportedException`. No query is retried or reconnected.
+- If cancellation cannot be confirmed, the connection/session is explicitly
+  closed. This covers the pinned server's startup race when the UUID has not yet
+  been installed, as well as transport failure. There is no wildcard fallback.
+  A server `must_invalidate` response retains that flag and its diagnostics.
+  Confirmed cancellation permits normal reuse; manual transactions remain
+  caller-managed and may require rollback after interruption.
+- **Inline prefix:** v3's default PREPARE hint is 1, preserving an initial batch
+  for DML counts/errors. APPEND still requests zero inline rows. Neither server
+  batch settings nor decode budgets are implicitly changed.
+- **Teardown:** close stops heartbeats, marks the session closed, and bounds the
+  complete DISCONNECT operation (headers and body) to approximately two seconds.
+  A timed-out operation is interrupted, not retried; repeated close is local.
+  Normal query timeouts are not shortened. A custom transport must cooperate with
+  interruption and concurrent control traffic to release its own resources; an
+  uncooperative transport cannot block the caller but may retain a daemon worker.
+- **TIMESTAMPTZ_NS:** DuckDB logical ID 33 maps to physical INT64 signed epoch
+  nanoseconds. Finite values return UTC `OffsetDateTime`; Timestamp/Calendar reads
+  preserve their instant and nanoseconds. Metadata reports `TIMESTAMPTZ_NS`,
+  `Types.TIMESTAMP_WITH_TIMEZONE`, `OffsetDateTime`, precision 35 and scale 9.
+  Binary APPEND is exact. Infinities are explicitly unsupported, and validity-
+  masked NULL payloads are not converted. No zoned timestamp text parsing is used.
+
+### Important correction to the original streaming diagnosis
+
+At signed Quack `f96420ed46`, PREPARE's counter increments by **actual rows**
+(`inline_rows += entry.rows`), not by the number of batches. It nevertheless
+drains a whole batch before checking that counter, so a hint of 1 selects one
+initial nonempty batch, **not one row or a decoded-memory bound**.
+
+The fragment builder also counts actual rows (`rows += chunk.size()`). A highly
+compressed sequence can therefore remain one server batch and still materialize
+millions of rows before the first JDBC row, with either the old or new hint.
+Exact observations with the new hint, signed DuckDB 2.0.0, and five million rows:
+
+| Query shape | Server target batch bytes | Initially materialized rows |
+| --- | --- | ---: |
+| Plain `range` | Default | 5,000,000 |
+| Non-sequential BIGINT projection | Default | 4,188,160 |
+| Plain `range` | 16,384 | 1,118,208 |
+| Non-sequential BIGINT projection | 16,384 | 2,048 |
+
+These are measured observations, not row-count guarantees. The non-sequential
+projection is `(hash(i) % 9223372036854775807)::BIGINT`.
+The driver does not silently alter `quack_target_batch_bytes`: that is a
+server/session tuning decision with throughput implications. The unmodified
+DuckBridge strict gate based on an untuned, compressed plain range is therefore
+**not certified by this driver change alone**. Coordinate server batch sizing
+or use a demonstrably multi-batch query before injecting a mid-stream fault.
+Oversized decoded batches still fail under the unchanged safety budgets rather
+than silently returning a partial result or raising those budgets automatically.
+
+Pinned sources:
+
+- [PREPARE inline drain and CANCEL handler](https://github.com/duckdb/duckdb-quack/blob/f96420ed46aee9c42064bdb99ddfd1230d6c0086/src/quack_server.cpp).
+- [Actual-row counting in the fragment builder](https://github.com/duckdb/duckdb-quack/blob/f96420ed46aee9c42064bdb99ddfd1230d6c0086/src/quack_fetch_collector.cpp).
+- [DuckDB 2.0 logical type IDs](https://github.com/duckdb/duckdb/blob/v2.0.0/src/include/duckdb/common/types.hpp).
+
+### Verification
+
+Both full profiles ran on Java **17.0.2**, Maven **3.9.16**, Linux x86-64, with
+isolated signed core extensions and unsigned extensions disabled:
+
+| Server / oracle | Tests | Failures | Errors | Skips |
+| --- | ---: | ---: | ---: | ---: |
+| DuckDB 1.5.6, Quack `7e80f7f`, JDBC 1.5.6.0 | 698 | 0 | 0 | 3 |
+| DuckDB 2.0.0, Quack `f96420ed46`, JDBC 2.0.0.0 | 698 | 0 | 0 | 3 |
+
+The integration report gate passed **16/16 classes, 50 total reports** on each
+profile. No required integration test was skipped. The three known skips remain
+the external unsigned preview pair and two IPv6/address-dependent tests. v3-only
+test bodies are version-gated; the v1 profile verifies explicit unsupported
+cancellation instead of claiming v3 behavior on an old server.
+
+New regression coverage includes:
+
+- Latch-controlled blocked PREPARE and FETCH, exact UUID ownership, repeated,
+  idle, completed and superseded cancellation, the cancel/new-PREPARE gate,
+  explicit close on startup mismatch, and server `must_invalidate` preservation.
+- Signed-server PREPARE cancellation observed through `quack_active_connections()`
+  with a 10-second server fallback and a cancellation result under three seconds.
+- Signed-server FETCH with its already-produced HTTP reply held in a concurrent
+  proxy while CANCEL runs; consuming the reply fails with 57014, never clean EOF.
+- A huge producer with a 64-KiB result buffer, no further FETCH consumption,
+  successful cancellation, explicit rollback, no committed insert, and connection
+  reuse. The test allows the producer to reach capacity before cancelling.
+- Real HTTP connection cuts after verified partial materialization, both with
+  default-sized non-sequential batches and a 20-million-row compressed range with
+  explicit smaller server batches. A subsequent FETCH fails with SQLException;
+  stale row getters fail rather than expose partial success.
+- DISCONNECT blackholes before headers and after a partial body, using a normal
+  30-second request timeout. Close returns under three seconds, sends only once,
+  and is idempotent. A legitimate 2.2-second query still succeeds. An interruptible
+  custom transport is also tested, as is single-attempt control-message dispatch.
+- TIMESTAMPTZ_NS logical/physical mapping, negative nanos, signed finite endpoints,
+  all supported compressed vector forms, NULL validity, infinity rejection,
+  metadata, multiple server timezones, Calendar/Timestamp reads, and APPEND checked
+  against **server-side `epoch_ns(v)`**, not merely a symmetric driver round trip.
+
+Commands (replace CLI paths as needed):
+
+```bash
+mise exec java@17.0.2 -- mvn --batch-mode --no-transfer-progress -Poracle -Dquack.it.required=true clean verify
+python3 scripts/check-integration-reports.py
+QUACK_IT_DUCKDB=/path/to/duckdb-2.0.0 mise exec java@17.0.2 -- mvn --batch-mode --no-transfer-progress -Poracle -Dduckdb.jdbc.version=2.0.0.0 clean verify
+QUACK_IT_EXPECTED_VERSION=v2.0.0 QUACK_IT_EXPECTED_QUACK=f96420ed46 python3 scripts/check-integration-reports.py
+```
+
+Local evidence is under `/tmp/opencode/quack-lifecycle-v1-java17.log`,
+`/tmp/opencode/quack-lifecycle-v2-java17.log`, and
+`/tmp/opencode/quack-lifecycle-prefix-probe.log`. These are local artifacts, not
+release dependencies. The DuckBridge logs and Kotlin acceptance wiring supplied
+in the handoff were read only; no DuckBridge acceptance task was run or claimed
+passing with a substituted artifact.
+
+Remaining boundaries: cancellation may use the configured HTTP timeout if the
+server/network cannot answer; ambiguous cancellation closes rather than promises
+reuse. General JDBC query/network deadlines and whole-body query deadlines remain
+separate work. Timestamp parameter interpolation retains existing microsecond
+precision; exact nanosecond APPEND/reads do not imply nanosecond prepared binding.
+No Maven Central or GitHub publication has been performed for this follow-up.

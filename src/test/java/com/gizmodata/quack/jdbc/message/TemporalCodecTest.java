@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class TemporalCodecTest {
     private static final LogicalTypeId[] TIMESTAMPS = {LogicalTypeId.TIMESTAMP_SEC, LogicalTypeId.TIMESTAMP_MS,
-            LogicalTypeId.TIMESTAMP, LogicalTypeId.TIMESTAMP_NS, LogicalTypeId.TIMESTAMP_TZ};
+            LogicalTypeId.TIMESTAMP, LogicalTypeId.TIMESTAMP_NS, LogicalTypeId.TIMESTAMP_TZ, LogicalTypeId.TIMESTAMP_TZ_NS};
 
     @Test
     void temporalSpecialValuesAreRejectedAcrossEveryEncoding() {
@@ -59,7 +59,7 @@ class TemporalCodecTest {
                         : new long[]{Long.MIN_VALUE, Long.MIN_VALUE + 2, 0, Long.MAX_VALUE - 1};
                 for (long raw : samples) {
                     Instant instant = instant(BigInteger.valueOf(raw), units(id));
-                    Object expected = id == LogicalTypeId.TIMESTAMP_TZ ? OffsetDateTime.ofInstant(instant, ZoneOffset.UTC)
+                    Object expected = zoned(id) ? OffsetDateTime.ofInstant(instant, ZoneOffset.UTC)
                             : LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
                     assertEquals(expected, decodeRaw(id, raw, encoding, true).getObject(0), id + " " + raw);
                 }
@@ -82,7 +82,7 @@ class TemporalCodecTest {
         for (VectorType encoding : new VectorType[]{VectorType.FLAT, VectorType.CONSTANT, VectorType.DICTIONARY}) {
             for (LogicalTypeId id : new LogicalTypeId[]{LogicalTypeId.DATE, LogicalTypeId.TIME, LogicalTypeId.TIME_NS,
                     LogicalTypeId.TIMESTAMP_SEC, LogicalTypeId.TIMESTAMP_MS, LogicalTypeId.TIMESTAMP,
-                    LogicalTypeId.TIMESTAMP_NS, LogicalTypeId.TIMESTAMP_TZ}) {
+                    LogicalTypeId.TIMESTAMP_NS, LogicalTypeId.TIMESTAMP_TZ, LogicalTypeId.TIMESTAMP_TZ_NS}) {
                 long infinity = id == LogicalTypeId.DATE ? Integer.MAX_VALUE : Long.MAX_VALUE;
                 for (long raw : new long[]{infinity, -infinity, id == LogicalTypeId.DATE ? Integer.MIN_VALUE : Long.MIN_VALUE}) {
                     DecodedVector vector = decodeRaw(id, raw, encoding, false);
@@ -161,7 +161,7 @@ class TemporalCodecTest {
         return switch (id) {
             case TIMESTAMP_SEC -> 1;
             case TIMESTAMP_MS -> 1_000;
-            case TIMESTAMP_NS -> 1_000_000_000;
+            case TIMESTAMP_NS, TIMESTAMP_TZ_NS -> 1_000_000_000;
             default -> 1_000_000;
         };
     }
@@ -172,8 +172,12 @@ class TemporalCodecTest {
     }
 
     private static Object value(LogicalTypeId id, Instant instant) {
-        return id == LogicalTypeId.TIMESTAMP_TZ ? OffsetDateTime.ofInstant(instant, ZoneOffset.ofHours(3))
+        return zoned(id) ? OffsetDateTime.ofInstant(instant, ZoneOffset.ofHours(3))
                 : LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
+    }
+
+    private static boolean zoned(LogicalTypeId id) {
+        return id == LogicalTypeId.TIMESTAMP_TZ || id == LogicalTypeId.TIMESTAMP_TZ_NS;
     }
 
     private static DecodedVector decodeRaw(LogicalTypeId id, long raw, VectorType encoding, boolean valid) {

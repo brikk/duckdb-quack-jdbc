@@ -1,6 +1,7 @@
 package com.gizmodata.quack.jdbc.sql;
 
 import com.gizmodata.quack.jdbc.QuackException;
+import com.gizmodata.quack.jdbc.QuackCancelledException;
 import com.gizmodata.quack.jdbc.QuackProtocolException;
 import com.gizmodata.quack.jdbc.QuackServerException;
 import com.gizmodata.quack.jdbc.codec.HugeIntParts;
@@ -32,6 +33,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeoutException;
 
 /** Live Quack session: connection id, query-id sequence, and a Quack transport. */
 public final class QuackSession implements AutoCloseable {
@@ -40,6 +44,10 @@ public final class QuackSession implements AutoCloseable {
     private final QuackTransport transport;
     private final QuackConnection connection;
     private final AtomicLong queryIdSeq = new AtomicLong(1);
+    // Never held by PREPARE/FETCH network I/O. A CANCEL holds it until its reply so
+    // a newer PREPARE cannot cross the server's separate UUID-check and abort steps.
+    private final Object queryGate = new Object();
+    private Query currentQuery;
     private volatile String connectionId;
     private volatile Optional<String> serverDuckdbVersion = Optional.empty();
     private volatile long protocolVersion = QuackConstants.QUACK_VERSION;
@@ -223,25 +231,95 @@ public final class QuackSession implements AutoCloseable {
     }
 
     private Cursor cursor(String sql, Optional<Long> inlineRows) {
+        return cursor(sql, inlineRows, newQuery());
+    }
+
+    Query newQuery() {
+        return new Query(protocolVersion == 3 ? new HugeIntParts(0, nextQueryId()) : new HugeIntParts(0, 0));
+    }
+
+    Cursor cursor(String sql, Query query) {
+        return cursor(sql, Optional.empty(), query);
+    }
+
+    private Cursor cursor(String sql, Optional<Long> inlineRows, Query query) {
         checkUsable();
+        synchronized (queryGate) {
+            checkUsable();
+            query.checkCancelled();
+            currentQuery = query;
+        }
         QuackMessage.PrepareRequest request = new QuackMessage.PrepareRequest(
                 MessageHeader.of(MessageType.PREPARE_REQUEST)
                         .withConnectionId(connectionId)
                         .withClientQueryId(nextQueryId()),
-                sql, protocolVersion == 3 ? new HugeIntParts(0, nextQueryId()) : new HugeIntParts(0, 0),
+                sql, query.uuid,
                 // Keep the first batch inline: JDBC needs the initial row to
                 // distinguish DML counts from result sets and surface errors.
-                // v3 counts entire batches, so this is not a strict row cap.
-                protocolVersion == 3 && inlineRows.isEmpty() ? Optional.of(2048L) : inlineRows);
-        QuackMessage response = send(request);
-        if (!(response instanceof QuackMessage.PrepareResponse prep)) {
-            throw new QuackProtocolException(
-                    "Expected PREPARE_RESPONSE, got " + response.getClass().getSimpleName());
+                // v3 drains a whole batch before checking the row hint. A hint
+                // of 1 therefore requests one batch, not a strict one-row cap.
+                protocolVersion == 3 && inlineRows.isEmpty() ? Optional.of(1L) : inlineRows);
+        try {
+            query.checkCancelled();
+            QuackMessage response = send(request);
+            query.checkCancelled();
+            if (!(response instanceof QuackMessage.PrepareResponse prep)) {
+                throw new QuackProtocolException(
+                        "Expected PREPARE_RESPONSE, got " + response.getClass().getSimpleName());
+            }
+            if (protocolVersion == 3 && !prep.resultUuid().equals(request.queryUuid())) {
+                throw new QuackProtocolException("PREPARE returned a different query UUID");
+            }
+            return new Cursor(this, prep, query);
+        } catch (RuntimeException e) {
+            query.done = true;
+            throw query.failure(e);
         }
-        if (protocolVersion == 3 && !prep.resultUuid().equals(request.queryUuid())) {
-            throw new QuackProtocolException("PREPARE returned a different query UUID");
+    }
+
+    void cancel(Query query) {
+        synchronized (queryGate) {
+            if (query.done || query.cancelled) return;
+            query.cancelled = true;
+            // An older statement may still own buffered rows, but it must never
+            // send a wildcard or cancel a newer statement on this connection.
+            if (currentQuery != query) return;
+            try {
+                QuackMessage response = send(new QuackMessage.CancelRequest(
+                        MessageHeader.of(MessageType.CANCEL_REQUEST)
+                                .withConnectionId(connectionId).withClientQueryId(nextQueryId()), query.uuid));
+                if (!(response instanceof QuackMessage.SuccessResponse)) {
+                    throw new QuackProtocolException("Expected SUCCESS_RESPONSE for CANCEL");
+                }
+            } catch (RuntimeException e) {
+                // In particular, the pinned server can reject a cancel arriving
+                // before PREPARE installs its UUID. Do not guess or replay SQL:
+                // close this session rather than advertise a successful cancel.
+                if (connection == null) close();
+                else connection.close();
+                throw new QuackException("Cancellation could not be confirmed; the session was closed", e);
+            }
         }
-        return new Cursor(this, prep);
+    }
+
+    static final class Query {
+        final HugeIntParts uuid;
+        volatile boolean cancelled;
+        volatile boolean done;
+
+        Query(HugeIntParts uuid) { this.uuid = uuid; }
+
+        void checkCancelled() {
+            if (cancelled) throw new QuackCancelledException();
+        }
+
+        RuntimeException failure(RuntimeException error) {
+            if (cancelled && !(error instanceof QuackCancelledException)
+                    && !(error instanceof QuackServerException server && server.mustInvalidate())) {
+                return new QuackCancelledException(error);
+            }
+            return error;
+        }
     }
 
     /**
@@ -429,21 +507,24 @@ public final class QuackSession implements AutoCloseable {
 
     @Override
     public synchronized void close() {
+        if (closed) return;
+        closed = true;
         if (heartbeat != null) heartbeat.shutdownNow();
-        if (closed || connectionId == null || isInvalidated()) {
-            closed = true;
-            return;
-        }
+        if (connectionId == null || isInvalidated()) return;
+        FutureTask<QuackMessage> task = new FutureTask<>(() -> transport.send(new QuackMessage.DisconnectMessage(
+                MessageHeader.of(MessageType.DISCONNECT_MESSAGE)
+                        .withConnectionId(connectionId).withClientQueryId(nextQueryId()))));
+        Thread worker = new Thread(task, "quack-disconnect");
+        worker.setDaemon(true);
         try {
-            QuackMessage.DisconnectMessage disconnect = new QuackMessage.DisconnectMessage(
-                    MessageHeader.of(MessageType.DISCONNECT_MESSAGE)
-                            .withConnectionId(connectionId)
-                            .withClientQueryId(nextQueryId()));
-            transport.send(disconnect);
-        } catch (RuntimeException ignored) {
+            worker.start();
+            task.get(QuackHttpTransport.DEFAULT_DISCONNECT_TIMEOUT.toNanos(), TimeUnit.NANOSECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (ExecutionException | TimeoutException | RuntimeException ignored) {
             // Best-effort disconnect.
         } finally {
-            closed = true;
+            task.cancel(true);
         }
     }
 
@@ -486,9 +567,9 @@ public final class QuackSession implements AutoCloseable {
     /**
      * Streaming cursor over the chunks of a Quack-prepared query.
      *
-     * <p>Holds at most one server batch in memory at a time
-     * (whatever {@code quack_fetch_batch_chunks} is set to on the
-     * server, default 12). {@link #nextChunk()} pulls from the
+     * <p>Holds at most one FETCH batch in memory at a time. v1 batches
+     * use {@code quack_fetch_batch_chunks}; v3 uses byte-sized batches.
+     * Compressed batches can expand into many rows. {@link #nextChunk()} pulls from the
      * buffered batch and issues a fresh {@code FETCH_REQUEST} when
      * the buffer is empty and the server signalled more chunks were
      * available.
@@ -501,11 +582,17 @@ public final class QuackSession implements AutoCloseable {
         private final HugeIntParts resultUuid;
         private final Deque<DataChunk> buffered;
         private final FetchState fetchState;
+        private final Query query;
         private boolean closed;
         private int materializedRowCount;
 
         Cursor(QuackSession session, QuackMessage.PrepareResponse prep) {
+            this(session, prep, null);
+        }
+
+        private Cursor(QuackSession session, QuackMessage.PrepareResponse prep, Query query) {
             this.session = session;
+            this.query = query;
             this.columnNames = prep.resultNames();
             this.columnTypes = prep.resultTypes();
             this.resultUuid = prep.resultUuid();
@@ -524,7 +611,12 @@ public final class QuackSession implements AutoCloseable {
 
         /** Peek at the first buffered chunk without advancing the cursor. */
         public DataChunk peekFirstChunk() {
+            checkCancelled();
             return buffered.peek();
+        }
+
+        void checkCancelled() {
+            if (query != null) query.checkCancelled();
         }
 
         /**
@@ -533,24 +625,42 @@ public final class QuackSession implements AutoCloseable {
          * {@code null} when the result set is exhausted.
          */
         public DataChunk nextChunk() {
+            checkCancelled();
             if (closed) return null;
             if (buffered.isEmpty() && fetchState.hasMore) {
-                List<DataChunk> next = session.fetchMoreChunks(resultUuid, fetchState);
+                List<DataChunk> next = fetch();
                 buffered.addAll(next);
                 for (DataChunk c : next) materializedRowCount += c.rowCount();
             }
+            checkCancelled();
+            if (buffered.isEmpty() && !fetchState.hasMore && query != null) query.done = true;
             return buffered.poll();
+        }
+
+        private List<DataChunk> fetch() {
+            try {
+                checkCancelled();
+                List<DataChunk> next = session.fetchMoreChunks(resultUuid, fetchState);
+                checkCancelled();
+                return next;
+            } catch (RuntimeException e) {
+                if (query != null) throw query.failure(e);
+                throw e;
+            }
         }
 
         /** Drain every remaining chunk and return them in order. */
         public List<DataChunk> drainAll() {
+            checkCancelled();
             List<DataChunk> all = new ArrayList<>(buffered);
             buffered.clear();
             while (fetchState.hasMore) {
-                List<DataChunk> next = session.fetchMoreChunks(resultUuid, fetchState);
+                List<DataChunk> next = fetch();
                 all.addAll(next);
                 for (DataChunk c : next) materializedRowCount += c.rowCount();
             }
+            checkCancelled();
+            if (query != null) query.done = true;
             return all;
         }
 
@@ -566,6 +676,7 @@ public final class QuackSession implements AutoCloseable {
         @Override
         public void close() {
             closed = true;
+            if (query != null) query.done = true;
             buffered.clear();
             // Quack has no explicit "release result" message yet; the server
             // releases state on DISCONNECT or after all chunks have been

@@ -6,6 +6,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Actual Quack v3 statement cancellation using message 12 and the owning query's
+  UUID, including blocked PREPARE and in-flight FETCH. Cancelled buffered rows
+  fail with SQL state `57014` rather than successful partial EOF. Quack v1
+  cancellation now explicitly throws `SQLFeatureNotSupportedException`.
+- Binary `TIMESTAMPTZ_NS` decoding and APPEND, with exact signed epoch nanoseconds,
+  UTC `OffsetDateTime` values, JDBC zoned timestamp metadata, and explicit infinity
+  rejection. No server text parsing is used.
+
+### Fixed
+
+- v3 PREPARE requests use an inline-row hint of 1 to drain only the first batch;
+  APPEND keeps its required zero-inline handshake. This is not a row or decoded
+  memory cap: a highly compressed result can still fit entirely in one server batch.
+- Session close has a separate two-second, whole-operation DISCONNECT deadline,
+  stops heartbeat resources, remains idempotent, and never retries teardown.
+  Ordinary query deadlines are unchanged. Custom transports are interrupted at
+  the deadline and must cooperate with interruption to release their own resources.
+- New PREPARE dispatch cannot overtake an in-progress cancellation. Cancellation
+  is never queued behind PREPARE/FETCH network I/O and never uses a wildcard UUID.
+  If cancellation cannot be confirmed (including the pinned server's early-UUID
+  startup race), the session closes explicitly rather than claiming success or
+  replaying SQL. Server `must_invalidate` and caller-managed transactions are retained.
+
 ## [0.10.0] — 2026-10-28
 
 ### Fixed
