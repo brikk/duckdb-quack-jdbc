@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-10-30
+
 ### Fixed
 
 - Give statement CANCEL its own two-second whole-operation deadline, including
@@ -16,6 +18,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   attempt controls, statement-owned UUIDs, and server invalidation diagnostics are
   unchanged. Uncooperative custom I/O may retain interrupted daemon workers until
   it returns, but cannot hold the cancellation caller indefinitely.
+
+### Testing
+
+- Full version-matched oracle suites pass on Java 17 against released DuckDB
+  1.5.6/v1 and 2.0.0/v3 with signed core extensions: 704 tests each, zero failures
+  or errors, and three known optional/environment skips. All 16 required
+  integration classes ran. New regressions cover lost CANCEL headers, stalled
+  response bodies, signed-server downstream response partitions, and custom I/O
+  that ignores interruption, while preserving healthy cancellation and reuse.
 
 ## [0.11.0] — 2026-10-29
 

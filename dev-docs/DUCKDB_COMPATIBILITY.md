@@ -395,14 +395,15 @@ modified; its adoption of this driver remains separate qualification work.
 
 ## Bounded CANCEL under Response Loss (2026-10-30)
 
-### Candidate and scope
+### Source and release scope
 
-Prepared on `fix/cancel-ack-deadline`, starting from the 0.11.0 runtime. The local
-artifact version is **0.11.1-SNAPSHOT**; the proposed patch release is **0.11.1**.
-Neither a release nor a snapshot deployment is authorized or performed by this
-follow-up. No tag, push, `mvn install`, DuckBridge source change, dependency
-substitution, or DuckBridge Gradle qualification task is part of this work.
-The source commit is supplied in the handoff reply.
+Prepared on `fix/cancel-ack-deadline`, starting from the 0.11.0 runtime, at source
+commit `4d3c966f8ebaf4666247e90f316b06e2ea5bdf66`. The implementation was verified
+as **0.11.1-SNAPSHOT** without publication or DuckBridge changes. The user then
+authorized release **0.11.1** to Maven Central on 2026-10-30. Release preparation
+is on `release/v0.11.1`; the `v0.11.1` tag uses the existing signed-server CI gates
+and automatic publication. No `mvn install`, DuckBridge source change, dependency
+substitution, or DuckBridge Gradle qualification task is part of this release.
 
 ### Missing contract and fix
 
