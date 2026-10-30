@@ -491,3 +491,20 @@ legitimate query deadlines or implement the separate general JDBC/whole-body
 query deadline work. If delivery is uncertain,
 closing the client does not establish the final server-side SQL outcome, so no
 automatic SQL retry is safe. The 0.11.0 compressed-batch/row-bound caveat is unchanged.
+
+### 0.11.1 publication confirmation
+
+The `v0.11.1` release tag points to `58da468121737b1d12e3a4ebd099107ab9b0d603`.
+[Release CI](https://github.com/brikk/duckdb-quack-jdbc/actions/runs/41109524395)
+passed both Java 17 signed-server oracle profiles: **704 tests each, zero
+failures/errors, one optional external-preview skip**. Both integration gates
+passed 16/16 required classes and 51 total reports. No required integration test
+was skipped; the two local IPv6/address-dependent skips did not occur in CI.
+
+Automatic deployment reached **published** on 2026-10-30. The public Maven POM
+and JAR were retrieved and verified as `dev.brikk.duckdb:quack-jdbc:0.11.1`.
+The public binary JAR's SHA-256 is
+`8cff98a94eb793569f3c6de0bc840edfc7ba9bb1118e5fb0f30ac0429d9fe3b3`.
+The [GitHub release](https://github.com/brikk/duckdb-quack-jdbc/releases/tag/v0.11.1)
+also contains binary, sources, Javadoc, and checksum assets. DuckBridge was not
+modified or requalified with a substituted dependency as part of publication.
