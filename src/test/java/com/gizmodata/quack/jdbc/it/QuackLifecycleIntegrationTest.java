@@ -1,6 +1,7 @@
 package com.gizmodata.quack.jdbc.it;
 
 import com.gizmodata.quack.jdbc.codec.DecodeLimits;
+import com.gizmodata.quack.jdbc.codec.HugeIntParts;
 import com.gizmodata.quack.jdbc.message.MessageCodec;
 import com.gizmodata.quack.jdbc.message.QuackMessage;
 import com.gizmodata.quack.jdbc.sql.QuackConnection;
@@ -13,7 +14,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.condition.EnabledIf;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -169,6 +173,56 @@ public class QuackLifecycleIntegrationTest {
         }
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void cancelResponsePartitionFailsClosedWithinFiveSeconds(boolean partialBodies) throws Exception {
+        ExecutorService callers = Executors.newFixedThreadPool(2);
+        try (var proxy = new Proxy(server); var connection = proxy.connect(30); var statement = connection.createStatement()) {
+            if (connection.session().protocolVersion() != 3) return;
+            statement.execute("SET max_execution_time=15000");
+            String marker = "quack_jdbc_cancel_ack_partition";
+            Future<?> execution = callers.submit(() -> statement.executeQuery(
+                    "/* " + marker + " */ SELECT sum(i) FROM range(1000000000000) t(i)"));
+            Future<?> cancellation = null;
+            try {
+                awaitActive(marker, execution);
+                int prepares = proxy.prepares.get();
+                proxy.partialResponses = partialBodies;
+                proxy.holdResponses.set(true);
+                long start = System.nanoTime();
+                cancellation = callers.submit(() -> { statement.cancel(); return null; });
+                Future<?> pendingCancel = cancellation;
+                ExecutionException failure = assertThrows(ExecutionException.class,
+                        () -> pendingCancel.get(5, TimeUnit.SECONDS));
+                assertTrue(Duration.ofNanos(System.nanoTime() - start).compareTo(Duration.ofSeconds(5)) < 0);
+                SQLException sql = assertInstanceOf(SQLException.class, failure.getCause());
+                assertTrue(sql.getMessage().contains("could not be confirmed"), sql.getMessage());
+                assertTrue(connection.isClosed());
+                assertTrue(connection.session().isClosed());
+                assertFalse(connection.isValid(1));
+                assertTrue(proxy.controlResponsesHeld.await(1, TimeUnit.SECONDS),
+                        "both real control acknowledgements must have reached the downstream partition");
+                assertEquals(1, proxy.cancels.get());
+                assertEquals(1, proxy.disconnects.get());
+                assertEquals(prepares, proxy.prepares.get(), "no SQL replay");
+                assertEquals(proxy.prepareUuid.get(), proxy.cancelUuid.get());
+                assertNotEquals(new HugeIntParts(0, 0), proxy.cancelUuid.get());
+                proxy.releaseResponses.countDown();
+                assertCancelled(execution);
+                assertNull(proxy.failure.get());
+                connection.close();
+                assertEquals(1, proxy.disconnects.get());
+            } finally {
+                proxy.releaseResponses.countDown();
+                execution.cancel(true);
+                if (cancellation != null) cancellation.cancel(true);
+            }
+        } finally {
+            callers.shutdownNow();
+            assertTrue(callers.awaitTermination(3, TimeUnit.SECONDS));
+        }
+    }
+
     private void awaitActive(String marker, Future<?> execution) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(4);
         try (var admin = DriverManager.getConnection(server.jdbcUrl()); var statement = admin.createStatement()) {
@@ -204,6 +258,15 @@ public class QuackLifecycleIntegrationTest {
         final CountDownLatch fetchHeld = new CountDownLatch(1);
         final CountDownLatch releaseFetch = new CountDownLatch(1);
         final AtomicInteger fetches = new AtomicInteger();
+        final AtomicInteger prepares = new AtomicInteger();
+        final AtomicInteger cancels = new AtomicInteger();
+        final AtomicInteger disconnects = new AtomicInteger();
+        final AtomicReference<HugeIntParts> prepareUuid = new AtomicReference<>();
+        final AtomicReference<HugeIntParts> cancelUuid = new AtomicReference<>();
+        final AtomicBoolean holdResponses = new AtomicBoolean();
+        final CountDownLatch releaseResponses = new CountDownLatch(1);
+        final CountDownLatch controlResponsesHeld = new CountDownLatch(2);
+        volatile boolean partialResponses;
         final AtomicReference<Throwable> failure = new AtomicReference<>();
         final QuackServerFixture backend;
         volatile long version = 1;
@@ -219,6 +282,15 @@ public class QuackLifecycleIntegrationTest {
                     QuackMessage message = MessageCodec.decode(bytes, DecodeLimits.DEFAULT, version);
                     boolean fetch = message instanceof QuackMessage.FetchRequest;
                     if (fetch) fetches.incrementAndGet();
+                    if (message instanceof QuackMessage.PrepareRequest prepare) {
+                        prepares.incrementAndGet();
+                        prepareUuid.set(prepare.queryUuid());
+                    }
+                    if (message instanceof QuackMessage.CancelRequest cancel) {
+                        cancels.incrementAndGet();
+                        cancelUuid.set(cancel.queryUuid());
+                    }
+                    if (message instanceof QuackMessage.DisconnectMessage) disconnects.incrementAndGet();
                     if (cut.get()) return; // Close a real HTTP request without a response.
                     var response = client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:"
                                     + backend.port() + "/quack"))
@@ -234,6 +306,26 @@ public class QuackLifecycleIntegrationTest {
                         fetchHeld.countDown();
                         assertTrue(releaseFetch.await(5, TimeUnit.SECONDS));
                     }
+                    if (holdResponses.get()) {
+                        int first = 0;
+                        if (partialResponses) {
+                            exchange.sendResponseHeaders(response.statusCode(), response.body().length);
+                            exchange.getResponseBody().write(response.body(), 0, 1);
+                            exchange.getResponseBody().flush();
+                            first = 1;
+                        }
+                        if (message instanceof QuackMessage.CancelRequest || message instanceof QuackMessage.DisconnectMessage) {
+                            controlResponsesHeld.countDown();
+                        }
+                        assertTrue(releaseResponses.await(10, TimeUnit.SECONDS));
+                        // A timed-out control client may already have closed its response
+                        // stream. The still-waiting PREPARE must be released and joined.
+                        try {
+                            if (!partialResponses) exchange.sendResponseHeaders(response.statusCode(), response.body().length);
+                            exchange.getResponseBody().write(response.body(), first, response.body().length - first);
+                        } catch (IOException expectedClosedControlStream) { }
+                        return;
+                    }
                     exchange.sendResponseHeaders(response.statusCode(), response.body().length);
                     exchange.getResponseBody().write(response.body());
                 } catch (Throwable error) { failure.compareAndSet(null, error); }
@@ -242,12 +334,17 @@ public class QuackLifecycleIntegrationTest {
         }
 
         QuackConnection connect() throws SQLException {
+            return connect(5);
+        }
+
+        QuackConnection connect(int timeoutSeconds) throws SQLException {
             return (QuackConnection) DriverManager.getConnection("jdbc:quack://127.0.0.1:" + http.getAddress().getPort()
-                    + "?token=" + backend.token() + "&requestTimeout=5");
+                    + "?token=" + backend.token() + "&requestTimeout=" + timeoutSeconds);
         }
 
         @Override public void close() {
             releaseFetch.countDown();
+            releaseResponses.countDown();
             http.stop(0);
             workers.shutdownNow();
         }

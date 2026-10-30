@@ -375,7 +375,7 @@ class QuackHttpTransportLimitsTest {
     }
 
     @Test
-    void controlMessagesHaveNoAddressReplayAndOnlyDisconnectGetsAShorterTimeout() {
+    void controlMessagesHaveNoAddressReplayAndTheirOwnShortTimeouts() {
         for (IOException failure : List.of(new ConnectException("unavailable"), new ClosedChannelException())) {
             for (QuackMessage control : List.of(
                     new QuackMessage.DisconnectMessage(MessageHeader.of(MessageType.DISCONNECT_MESSAGE)),
@@ -386,10 +386,17 @@ class QuackHttpTransportLimitsTest {
                 transport.setProtocolVersion(3);
                 assertThrows(QuackException.class, () -> transport.send(control));
                 assertEquals(1, client.sends);
-                assertEquals(Optional.of(Duration.ofSeconds(control instanceof QuackMessage.DisconnectMessage ? 2 : 30)),
-                        client.request.timeout());
+                assertEquals(Optional.of(Duration.ofSeconds(2)), client.request.timeout());
             }
         }
+    }
+
+    @Test
+    void ordinaryRequestsKeepTheirConfiguredTimeoutInsteadOfTheControlDeadline() {
+        StubClient client = new StubClient(MessageCodec.encode(SUCCESS));
+        QuackHttpTransport transport = new QuackHttpTransport(ENDPOINT, client, Duration.ofSeconds(30));
+        assertEquals(SUCCESS, transport.send(REQUEST));
+        assertEquals(Optional.of(Duration.ofSeconds(30)), client.request.timeout());
     }
 
     private static final class TrackedBody extends InputStream {

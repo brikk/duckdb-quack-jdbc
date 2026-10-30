@@ -285,7 +285,7 @@ public final class QuackSession implements AutoCloseable {
             // send a wildcard or cancel a newer statement on this connection.
             if (currentQuery != query) return;
             try {
-                QuackMessage response = send(new QuackMessage.CancelRequest(
+                QuackMessage response = sendCancel(new QuackMessage.CancelRequest(
                         MessageHeader.of(MessageType.CANCEL_REQUEST)
                                 .withConnectionId(connectionId).withClientQueryId(nextQueryId()), query.uuid));
                 if (!(response instanceof QuackMessage.SuccessResponse)) {
@@ -299,6 +299,29 @@ public final class QuackSession implements AutoCloseable {
                 else connection.close();
                 throw new QuackException("Cancellation could not be confirmed; the session was closed", e);
             }
+        }
+    }
+
+    private QuackMessage sendCancel(QuackMessage.CancelRequest request) {
+        // The deadline covers transport setup, headers, body consumption and decode.
+        // HttpRequest.timeout alone ends at headers for the streaming body handler.
+        FutureTask<QuackMessage> task = new FutureTask<>(() -> send(request));
+        Thread worker = new Thread(task, "quack-cancel");
+        worker.setDaemon(true);
+        try {
+            worker.start();
+            return task.get(QuackHttpTransport.DEFAULT_CANCEL_TIMEOUT.toNanos(), TimeUnit.NANOSECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new QuackException("Quack cancellation was interrupted", e);
+        } catch (TimeoutException e) {
+            throw new QuackException("Quack CANCEL exceeded its two-second deadline", e);
+        } catch (ExecutionException e) {
+            // Preserve typed diagnostics, especially must_invalidate, from send().
+            if (e.getCause() instanceof RuntimeException cause) throw cause;
+            throw new QuackException("Quack cancellation failed", e.getCause());
+        } finally {
+            task.cancel(true);
         }
     }
 

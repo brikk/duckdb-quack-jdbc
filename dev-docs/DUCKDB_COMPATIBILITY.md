@@ -392,3 +392,101 @@ public Maven repository's POM and JAR were retrieved and verified as
 [GitHub release](https://github.com/brikk/duckdb-quack-jdbc/releases/tag/v0.11.0)
 includes binary, sources, Javadoc, and checksum assets. DuckBridge was not
 modified; its adoption of this driver remains separate qualification work.
+
+## Bounded CANCEL under Response Loss (2026-10-30)
+
+### Candidate and scope
+
+Prepared on `fix/cancel-ack-deadline`, starting from the 0.11.0 runtime. The local
+artifact version is **0.11.1-SNAPSHOT**; the proposed patch release is **0.11.1**.
+Neither a release nor a snapshot deployment is authorized or performed by this
+follow-up. No tag, push, `mvn install`, DuckBridge source change, dependency
+substitution, or DuckBridge Gradle qualification task is part of this work.
+The source commit is supplied in the handoff reply.
+
+### Missing contract and fix
+
+Published 0.11.0 correctly sends UUID-targeted CANCEL and bounds DISCONNECT, but
+CANCEL still inherits the normal HTTP request timeout. With a 30-second timeout,
+a lost CANCEL acknowledgement holds the dispatch gate and delays fail-closed
+cleanup. Merely capping `HttpRequest.timeout` is insufficient when the streaming
+body handler has already received headers and then stalls reading the body.
+
+The patch adds `DEFAULT_CANCEL_TIMEOUT` (two seconds) and two complementary caps:
+
+- The HTTP layer caps CANCEL's request timeout at two seconds, just as DISCONNECT
+  has its own two-second cap. A shorter configured HTTP timeout remains shorter;
+  ordinary PREPARE/FETCH requests retain their configured timeout. Both controls
+  remain single-attempt operations.
+- The session waits at most approximately two seconds for the **entire CANCEL**,
+  including transport setup, headers, response-body consumption and decoding.
+  At expiry it cancels and interrupts the daemon control worker. The existing
+  fail-closed path then closes the connection with the independent two-second
+  DISCONNECT budget and returns an explicit SQLException.
+
+Thus lost CANCEL and DISCONNECT acknowledgements consume approximately four
+seconds plus scheduling overhead, rather than the general 30/60-second timeout.
+Healthy cancellation still interrupts the real query with SQLState 57014 and
+permits autocommit reuse. No SQL is replayed, no wildcard UUID is used, and no new
+PREPARE can overtake an ambiguous cancellation. Typed error diagnostics and
+`must_invalidate` survive the worker boundary; an invalidated server is not sent
+a DISCONNECT. Explicit transaction rollback remains caller-managed.
+
+### Verification
+
+The new HTTP-header, partial-body and uncooperative-custom-transport regressions
+were first run against the unfixed source: all three failed because the cancel
+caller was still waiting after five seconds. After the patch, each returns an
+explicit failure with a closed connection within the five-second allowance.
+
+Both full oracle profiles pass on Java 17.0.2 / Maven 3.9.16 / Linux x86-64:
+
+| Signed server / version-matched oracle | Tests | Failures | Errors | Skips |
+| --- | ---: | ---: | ---: | ---: |
+| DuckDB 1.5.6, Quack `7e80f7f`, JDBC 1.5.6.0 | 704 | 0 | 0 | 3 |
+| DuckDB 2.0.0, Quack `f96420ed46`, JDBC 2.0.0.0 | 704 | 0 | 0 | 3 |
+
+Both integration report gates passed **16/16 required classes, 51 total reports**.
+There were no skipped required integration tests; the three known optional/
+environment skips are unchanged. v3-only real-server tests are version-gated.
+This is local verification, not a new remote CI or publication result.
+
+Coverage includes:
+
+- Missing CANCEL response headers and partially delivered bodies, each with a
+  30-second normal timeout and a simultaneously blackholed DISCONNECT.
+- A real signed v3 server running a marked, independently observed active query
+  with a 15-second server fallback. A concurrent HTTP proxy forwards the actual
+  CANCEL and DISCONNECT to the server but withholds both acknowledgements (either
+  all headers or partial bodies). Cancellation fails closed inside five seconds,
+  with one request per control, exact owning UUID, and no SQL replay. The response
+  path is restored in `finally`, and execution/cancellation callers are joined.
+- Uncooperative custom transport I/O that ignores interruption for both controls:
+  the caller is still bounded, the ambiguous connection stays closed even after
+  late success responses, and a new PREPARE waiting behind the gate fails locally.
+- Existing healthy cancellation, SQLState 57014, autocommit reuse, UUID/completion
+  races, superseded statements, transaction rollback and `must_invalidate` tests.
+- Existing DISCONNECT blackholes before headers and after a partial body, a
+  legitimate query taking longer than two seconds, a configured 30-second normal
+  HTTP timeout, and real mid-stream connection-cut failures rather than partial EOF.
+
+Reproduce with the same two oracle commands and integration-report checks shown
+in the preceding follow-up. The local v2 CLI is
+`/tmp/opencode/quack-must-invalidate-v2/duckdb` (released 2.0.0), and evidence is in:
+
+- `/tmp/opencode/quack-cancel-deadline-red.log`
+- `/tmp/opencode/quack-cancel-deadline-v3-focused.log`
+- `/tmp/opencode/quack-cancel-deadline-v1-java17.log`
+- `/tmp/opencode/quack-cancel-deadline-v2-java17.log`
+
+### Remaining limitations
+
+The control **caller** is bounded; arbitrary custom I/O cannot be forcibly
+terminated. A custom transport that ignores interruption may keep a daemon
+worker/resources until its I/O returns. The original PREPARE/FETCH response is not
+forcibly aborted by the control deadline and can remain blocked until delivery
+resumes, especially after headers have arrived. The new deadline does not shorten
+legitimate query deadlines or implement the separate general JDBC/whole-body
+query deadline work. If delivery is uncertain,
+closing the client does not establish the final server-side SQL outcome, so no
+automatic SQL retry is safe. The 0.11.0 compressed-batch/row-bound caveat is unchanged.

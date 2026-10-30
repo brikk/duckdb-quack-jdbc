@@ -51,6 +51,7 @@ public final class QuackHttpTransport implements QuackTransport {
     public static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(10);
     public static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(60);
     public static final Duration DEFAULT_DISCONNECT_TIMEOUT = Duration.ofSeconds(2);
+    public static final Duration DEFAULT_CANCEL_TIMEOUT = Duration.ofSeconds(2);
 
     private final URI endpoint;
     private final HttpClient httpClient;
@@ -110,8 +111,9 @@ public final class QuackHttpTransport implements QuackTransport {
         byte[] body = MessageCodec.encode(request, protocolVersion);
         boolean disconnect = request instanceof QuackMessage.DisconnectMessage;
         boolean control = disconnect || request instanceof QuackMessage.CancelRequest;
-        Duration timeout = disconnect && requestTimeout.compareTo(DEFAULT_DISCONNECT_TIMEOUT) > 0
-                ? DEFAULT_DISCONNECT_TIMEOUT : requestTimeout;
+        Duration controlTimeout = disconnect ? DEFAULT_DISCONNECT_TIMEOUT : DEFAULT_CANCEL_TIMEOUT;
+        Duration timeout = control && requestTimeout.compareTo(controlTimeout) > 0
+                ? controlTimeout : requestTimeout;
 
         URI[] attempts = endpointCandidates();
         if (control && attempts.length > 1) attempts = Arrays.copyOf(attempts, 1);

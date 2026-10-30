@@ -245,6 +245,23 @@ These changes were added in **0.11.0** and are not present in 0.10.0:
   No teardown retry is made. A custom transport must honor interruption to release
   its underlying I/O; the driver's teardown worker is daemonized.
 
+### Unreleased bounded cancellation (0.11.1 candidate)
+
+Published 0.11.0 still uses the general request timeout while waiting for a
+CANCEL acknowledgement. The 0.11.1 candidate bounds the entire statement CANCEL
+operation to approximately two seconds, including stalled response bodies and
+custom transport waits. Unconfirmed cancellation closes the connection using
+the separate two-second DISCONNECT budget, so both lost acknowledgements fail
+closed in approximately four seconds plus scheduling overhead. No SQL or control
+request is replayed, and normal query timeouts are unchanged.
+
+Custom transports should honor interruption; otherwise their daemon control
+workers may outlive the caller until the custom I/O returns. The original query's
+already-in-flight response is not forcibly aborted by this control deadline and
+may remain blocked until delivery resumes; general whole-body query deadlines
+remain separate work. A closed client connection does not establish the final
+server-side outcome of uncertain SQL, so do not automatically retry it.
+
 ### Safer token configuration
 
 For desktop tools such as DataGrip, avoid putting `token=...` directly

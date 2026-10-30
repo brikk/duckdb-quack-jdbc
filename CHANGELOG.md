@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Give statement CANCEL its own two-second whole-operation deadline, including
+  response headers, body consumption, and custom transport waits. If acknowledgement
+  cannot be confirmed, close the connection using the existing separate two-second
+  DISCONNECT budget and throw SQLException rather than wait for the general 30/60s
+  query timeout or advertise a reusable session. Normal query deadlines, single-
+  attempt controls, statement-owned UUIDs, and server invalidation diagnostics are
+  unchanged. Uncooperative custom I/O may retain interrupted daemon workers until
+  it returns, but cannot hold the cancellation caller indefinitely.
+
 ## [0.11.0] — 2026-10-29
 
 ### Added
