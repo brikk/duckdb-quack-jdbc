@@ -621,3 +621,21 @@ DuckBridge's `TestQuackTriggeredCountContracts.kt` and `TestTriggeredWrites.kt`
 were read for the requested contracts, not modified or executed with a substituted
 dependency. This is driver-side test evidence, not a claim that the consumer's
 strict triggered-write qualification has been rerun or adopted.
+
+### 0.12.0 publication confirmation
+
+The `v0.12.0` release tag points to `9ef00f3c75433e9cb71d265ccd69df88147480bd`.
+[Release CI](https://github.com/brikk/duckdb-quack-jdbc/actions/runs/41172849401)
+passed both Java 17 signed-server oracle profiles: **724 tests each, zero
+failures/errors, one optional external-preview skip**. Both integration gates
+passed 17/17 required classes and 54 total reports; no required integration test
+was skipped. The two local IPv6/address-dependent skips did not occur in CI.
+
+Automatic deployment reached **published** on 2026-10-31. The public Maven POM
+and JAR were retrieved and verified as `dev.brikk.duckdb:quack-jdbc:0.12.0`.
+The public binary JAR's SHA-256 is
+`0fa0cc634d35cb2a77ff88232fe1f6a3fd1570ba54729c9cc50005c7b575f1cf`.
+The [GitHub release](https://github.com/brikk/duckdb-quack-jdbc/releases/tag/v0.12.0)
+also contains binary, sources, Javadoc, and checksum assets. This release uses
+the implementation from the user-confirmed snapshot; only version and release
+documentation changed. DuckBridge was not modified as part of publication.
