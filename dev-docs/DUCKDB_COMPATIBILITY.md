@@ -508,3 +508,111 @@ The public binary JAR's SHA-256 is
 The [GitHub release](https://github.com/brikk/duckdb-quack-jdbc/releases/tag/v0.11.1)
 also contains binary, sources, Javadoc, and checksum assets. DuckBridge was not
 modified or requalified with a substituted dependency as part of publication.
+
+## Triggered DML Affected-Row Classification (2026-10-31)
+
+### Scope and diagnosis
+
+Prepared on `fix/triggered-dml-counts`, based on published 0.11.1's runtime.
+The source commit is supplied in the handoff reply. The local build remains
+`0.12.0-SNAPSHOT`; this work does not publish, push, tag, install an artifact into
+the local Maven repository, or alter DuckBridge's checkout/dependency.
+
+The exact reproducer was independently run with the published 0.11.1 JAR from
+Maven Central (SHA-256
+`8cff98a94eb793569f3c6de0bc840edfc7ba9bb1118e5fb0f30ac0429d9fe3b3`) and with the
+patched driver. Both use released DuckDB 2.0.0 with signed core Quack
+`f96420ed46aee9c42064bdb99ddfd1230d6c0086`, negotiated v3:
+
+| Observation | Published 0.11.1 | Patched source |
+| --- | --- | --- |
+| `execute(INSERT ... VALUES(1),(2))` | `true` | `false` |
+| `getUpdateCount()` | `-1` | `2` |
+| Raw cursor count name/value for a separate two-row insert | `count_star()` / `2` | `count_star()` / `2` |
+| `executeUpdate()` for a further two-row insert | `0` | `2` |
+| Final target / audit rows after the three intentional inserts | `6` / `6` | `6` / `6` |
+
+The new signed-server integration suite also uses the version-matched native
+`duckdb_jdbc` 2.0.0.0 Quack client, with its own isolated signed core installation.
+It independently verifies `count_star() = 2` and exact final target/audit effects.
+The original seven-case regression suite initially failed six classification/
+count checks on the unfixed source, while this raw/native count-contract check
+already passed. The data and wire count were correct; JDBC result classification
+was wrong.
+
+### Fix and safety boundaries
+
+Quack's PREPARE response carries names, types, values and a query UUID, but no
+statement-kind/result-kind tag. Adding `count_star()` to a global name allowlist
+would therefore misclassify ordinary `SELECT count(*)` as an update count.
+The existing `Count` and `rows_affected` allowlist could already swallow SELECT
+aliases and one-row DML RETURNING results with those names.
+
+Classification now combines:
+
+- A single non-null, nonnegative integral value with one column named `Count`,
+  `rows_affected` or `count_star()` (case-insensitive).
+- The submitted statement's SQL context. INSERT, UPDATE, DELETE and MERGE without
+  a top-level RETURNING clause may expose the wire value as their affected count.
+  Legacy Count/rows_affected command results retain their DDL/control handling.
+  SELECT and RETURNING preserve their actual ResultSet, metadata and lazy FETCH.
+
+The lexical context reader handles CTEs (including recursive/keyed and materialized
+forms), nested comments, quoted identifiers, ordinary/escaped/dollar strings,
+balanced groups and trailing empty statements. It is not a full SQL parser and
+does not rewrite, validate or execute SQL. Unknown and multi-statement text is
+conservatively retained as a wire ResultSet rather than guessing which command a
+count-shaped result belongs to. General JDBC multiple-result support is unchanged.
+
+No metadata probe, SELECT-based count reconstruction, or SQL replay is introduced.
+All public/prepared execution and batch paths still converge on the same single
+execution. Count values above int range retain the existing Integer.MAX_VALUE
+cap, including unsigned BigInteger counts without signed-long wrapping. A final
+cancellation check before publishing classification prevents a concurrent cancel
+from turning into successful DML completion.
+
+DuckDB 2.0.0 explicitly rejects RETURNING on tables with FOR EACH ROW triggers.
+That remains a server SQLException with no fabricated count or partial effects;
+the suite separately verifies supported RETURNING with statement-level triggers.
+No server trigger capability or wire change is claimed by this fix.
+
+### Verification
+
+Full oracle profiles passed on Java 17.0.2, Maven 3.9.16, Linux x86-64, with isolated
+signed core server extensions and unsigned extensions disabled:
+
+| Server / version-matched oracle | Tests | Failures | Errors | Skips |
+| --- | ---: | ---: | ---: | ---: |
+| DuckDB 1.5.6, Quack `7e80f7f`, JDBC 1.5.6.0 | 724 | 0 | 0 | 3 |
+| DuckDB 2.0.0, Quack `f96420ed46`, JDBC 2.0.0.0 | 724 | 0 | 0 | 3 |
+
+Both integration report gates passed **17/17 required classes, 54 total reports**.
+No required integration test was skipped; the three optional/environment skips
+are unchanged. Trigger-specific real-server test bodies are v3-only; ordinary
+SELECT/RETURNING and legacy driver behavior run on both supported versions.
+
+New coverage includes row-trigger INSERT execute/update/prepared/batch counts;
+statement-trigger prepared UPDATE/DELETE and zero-match counts; exact source/audit
+counts, values and sums detecting duplicate execution; explicit rollback after a
+trigger constraint error; SELECT count aliases; statement-trigger RETURNING count
+aliases and zero-row RETURNING; raw and native Quack observations; CTE/comment/
+literal handling; malformed count shapes; large unsigned count clamping; one-row
+inline SELECT/RETURNING results that remain lazy; and cancellation during result
+classification. The full existing bounded CANCEL/DISCONNECT, session invalidation,
+transaction, batching and streaming-fault suites also pass unchanged.
+
+Commands are the same full oracle/report-gate commands used above, with the 2.0.0
+CLI selected by `QUACK_IT_DUCKDB` and `-Dduckdb.jdbc.version=2.0.0.0` for that run.
+Local evidence:
+
+- `/tmp/opencode/quack-triggered-counts-red.log`
+- `/tmp/opencode/quack-triggered-counts-published-probe.log`
+- `/tmp/opencode/quack-triggered-counts-fixed-probe.log`
+- `/tmp/opencode/quack-triggered-counts-unit.log`
+- `/tmp/opencode/quack-triggered-counts-v1-java17.log`
+- `/tmp/opencode/quack-triggered-counts-v2-java17.log`
+
+DuckBridge's `TestQuackTriggeredCountContracts.kt` and `TestTriggeredWrites.kt`
+were read for the requested contracts, not modified or executed with a substituted
+dependency. This is driver-side test evidence, not a claim that the consumer's
+strict triggered-write qualification has been rerun or adopted.

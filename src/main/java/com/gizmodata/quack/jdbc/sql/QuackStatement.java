@@ -5,6 +5,7 @@ import com.gizmodata.quack.jdbc.QuackCancelledException;
 import com.gizmodata.quack.jdbc.message.DataChunk;
 import com.gizmodata.quack.jdbc.type.LogicalTypeId;
 
+import java.math.BigInteger;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -102,7 +103,9 @@ public class QuackStatement extends SkeletalStatement {
             connection.beginTransactionIfNeeded();
             QuackSession.Cursor cursor = connection.session().cursor(sql, query);
             DataChunk first = cursor.peekFirstChunk();
-            if (looksLikeRowsAffected(cursor, first)) {
+            boolean countResult = looksLikeRowsAffected(sql, cursor, first);
+            query.checkCancelled();
+            if (countResult) {
                 updateCount = extractRowsAffected(first);
                 cursor.close();
                 currentResultSet = null;
@@ -126,23 +129,31 @@ public class QuackStatement extends SkeletalStatement {
         }
     }
 
-    private boolean looksLikeRowsAffected(QuackSession.Cursor cursor, DataChunk first) {
-        if (cursor.columnNames().size() != 1) return false;
+    private boolean looksLikeRowsAffected(String sql, QuackSession.Cursor cursor, DataChunk first) {
+        if (cursor.columnNames().size() != 1 || cursor.columnTypes().size() != 1
+                || first == null || first.rowCount() != 1 || first.columns().size() != 1
+                || cursor.materializedRowCount() != 1) return false;
         String name = cursor.columnNames().get(0);
-        if (!"Count".equalsIgnoreCase(name) && !"rows_affected".equalsIgnoreCase(name)) {
-            return false;
-        }
-        if (cursor.columnTypes().isEmpty()) return false;
+        boolean legacyCount = "Count".equalsIgnoreCase(name) || "rows_affected".equalsIgnoreCase(name);
+        if (!legacyCount && !"count_star()".equalsIgnoreCase(name)) return false;
         LogicalTypeId id = cursor.columnTypes().get(0).id();
-        return (id == LogicalTypeId.BIGINT || id == LogicalTypeId.INTEGER
-                || id == LogicalTypeId.UBIGINT || id == LogicalTypeId.UINTEGER)
-                && first != null
-                && first.rowCount() <= 1;
+        if (id != LogicalTypeId.BIGINT && id != LogicalTypeId.INTEGER
+                && id != LogicalTypeId.UBIGINT && id != LogicalTypeId.UINTEGER) return false;
+        Object value = first.columns().get(0).getObject(0);
+        if (!(value instanceof Number number)
+                || (value instanceof BigInteger big ? big.signum() < 0 : number.longValue() < 0)) return false;
+        // The wire has no statement-kind tag. Labels alone also occur in SELECT
+        // and RETURNING results, which must never be consumed as update counts.
+        SqlResultKind kind = SqlResultKind.of(sql);
+        return kind == SqlResultKind.DML_COUNT || legacyCount && kind == SqlResultKind.OTHER_COUNT;
     }
 
     private int extractRowsAffected(DataChunk chunk) {
         if (chunk == null || chunk.rowCount() == 0 || chunk.columns().isEmpty()) return 0;
         Object value = chunk.columns().get(0).getObject(0);
+        if (value instanceof BigInteger big) {
+            return big.compareTo(BigInteger.valueOf(Integer.MAX_VALUE)) > 0 ? Integer.MAX_VALUE : big.intValue();
+        }
         if (value instanceof Number n) {
             long v = n.longValue();
             return v > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) v;

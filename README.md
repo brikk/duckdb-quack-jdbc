@@ -424,6 +424,12 @@ GizmoData roadmap.
 
 ## Compatibility notes
 
+- **Unreleased affected-row fix (not in 0.11.1):** triggered writes can return a
+  numeric `count_star()` column. Non-RETURNING DML now reports that wire value as
+  its JDBC update count. SELECT counts and RETURNING remain ResultSets regardless
+  of count-like column aliases. The driver checks SQL context without executing
+  probes or replaying writes. Unknown and multi-statement SQL text conservatively
+  retains its wire ResultSet because Quack does not provide a statement-kind tag.
 - DataChunk vector encodings supported: **FLAT**, **CONSTANT**,
   **DICTIONARY**, **SEQUENCE**. **FSST** is not yet supported.
 - Integer JDBC mappings preserve the logical range: UTINYINT, USMALLINT,

@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Classify triggered INSERT/UPDATE/DELETE results named `count_star()` as affected
+  row counts when the submitted SQL is non-RETURNING DML. Use SQL context as well
+  as the numeric result shape, so SELECT counts and DML RETURNING stay ResultSets
+  even when named `Count`, `rows_affected`, or `count_star()`. Prepared statements
+  and batches share the same path; no SQL replay or metadata query is introduced.
+  CTEs, nested comments, quoted identifiers and string literals are recognized;
+  unknown or multi-statement contexts conservatively retain the wire ResultSet.
+- Recheck cancellation after count classification before publishing success, and
+  preserve the existing int-count cap without wrapping large unsigned counts.
+
 ## [0.11.1] — 2026-10-30
 
 ### Fixed
