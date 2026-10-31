@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-10-31
+
 ### Fixed
 
 - Classify triggered INSERT/UPDATE/DELETE results named `count_star()` as affected
@@ -17,6 +19,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   unknown or multi-statement contexts conservatively retain the wire ResultSet.
 - Recheck cancellation after count classification before publishing success, and
   preserve the existing int-count cap without wrapping large unsigned counts.
+
+### Testing
+
+- Full version-matched Java 17 oracle suites pass against signed DuckDB 1.5.6/v1
+  and 2.0.0/v3: 724 tests each, zero failures/errors, and no skipped required
+  integration tests. Regressions verify triggered write counts and exact audit
+  effects, SELECT/RETURNING classification, raw/native Quack counts, rollback,
+  lazy results, and cancellation during classification. The tested
+  `0.12.0-20261031.051948-3` snapshot was also confirmed by the user before release.
 
 ## [0.11.1] — 2026-10-30
 

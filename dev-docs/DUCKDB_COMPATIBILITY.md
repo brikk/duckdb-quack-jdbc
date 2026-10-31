@@ -513,10 +513,15 @@ modified or requalified with a substituted dependency as part of publication.
 
 ### Scope and diagnosis
 
-Prepared on `fix/triggered-dml-counts`, based on published 0.11.1's runtime.
-The source commit is supplied in the handoff reply. The local build remains
-`0.12.0-SNAPSHOT`; this work does not publish, push, tag, install an artifact into
-the local Maven repository, or alter DuckBridge's checkout/dependency.
+Prepared on `fix/triggered-dml-counts`, based on published 0.11.1's runtime, at
+source commit `4762e78e59c28f27c9e63c8a02f389d037f07ae8`. After implementation,
+the user authorized pushing to `main`; signed-server
+[CI](https://github.com/brikk/duckdb-quack-jdbc/actions/runs/41172031771) passed
+and published snapshot `0.12.0-20261031.051948-3`. The user confirmed that snapshot
+tested successfully and authorized release **0.12.0** on 2026-10-31. Release
+preparation is on `release/v0.12.0`, using the existing tag-driven CI and automatic
+Maven Central publication. No local Maven installation or DuckBridge checkout/
+dependency change is part of this driver release.
 
 The exact reproducer was independently run with the published 0.11.1 JAR from
 Maven Central (SHA-256
