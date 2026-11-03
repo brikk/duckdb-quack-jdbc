@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-11-03
+
 ### Changed
 
 - Keep INTEGER/BIGINT SEQUENCE and primitive BOOLEAN/numeric CONSTANT vectors
@@ -19,6 +21,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   array backing, or exhaustively switching on variants, may need to adapt.
   See [the large-result checklist and evidence](dev-docs/BIG_RESULTS_TODO.md)
   for scope and remaining server/chunk-decoding work.
+
+### Testing
+
+- Desired-behavior regressions failed before the decoder changes, including a
+  fixed-heap signed-server reproduction. Full 40-million-row sequence and
+  primitive constant reads now pass in a 64 MiB JVM, including early-close
+  transaction reuse. Synthetic extreme-cardinality vectors fit a 32 MiB JVM.
+- Full release-version matched-oracle suites pass on Java 17 and 21 against
+  signed DuckDB 1.5.6/v1 and 2.0.0/v3: 762 tests per combination, zero failures
+  or errors, three known optional/environment skips, and 17/17 required
+  integration classes. Every production class remains Java 17 bytecode. See
+  [the 0.13.0 release report](dev-docs/RELEASE_0.13.0.md) for exact native hashes
+  and verification evidence.
 
 ## [0.12.1] — 2026-11-03
 

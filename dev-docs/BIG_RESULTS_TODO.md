@@ -107,4 +107,4 @@ production class is major version **61** (Java 17), including the Java 21 builds
 Maven is 3.9.16. All fixture CLI/extension hashes are consistent across the two
 JDKs and match the signed release bytes linked above. These results qualify the
 implementation, not downstream dependency adoption. Release preparation and
-publication are recorded separately when requested.
+publication are recorded separately in [RELEASE_0.13.0.md](RELEASE_0.13.0.md).

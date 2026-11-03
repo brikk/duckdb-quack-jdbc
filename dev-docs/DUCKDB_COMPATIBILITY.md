@@ -654,3 +654,19 @@ See [the 0.12.1 release report](RELEASE_0.12.1.md) for red-then-green regression
 the signed-server byte hashes, full Java 17/21 oracle verification, and the
 separate [compressed-range decode-budget follow-up](DECODE_BUDGET_FOLLOWUP.md).
 No downstream catalog/Trino/Doris adoption is included in this release.
+
+## Compact primitive vectors in 0.13.0 (2026-11-03)
+
+Version **0.13.0** keeps INTEGER/BIGINT SEQUENCE and primitive CONSTANT vectors
+compact during decoding, with budget charges for their stored representations.
+This avoids expanded arrays for huge compressed ranges without raising default
+limits or requiring a server change. JDBC values, metadata and the Java 17 floor
+remain unchanged; low-level DecodedVector consumers must allow the new sealed
+variants instead of assuming primitive array backing.
+
+The signed-server regressions read 40 million range and constant rows in a 64 MiB
+JVM and retain transaction-safe early close. Generic wide/nested/flat batch bounds,
+lazy dictionaries and chunk-at-a-time decoding remain separate work. See the
+[0.13.0 release report](RELEASE_0.13.0.md) for native byte hashes, red/green evidence,
+release verification and publication details, and the
+[topic checklist](BIG_RESULTS_TODO.md) for remaining work.
