@@ -4,6 +4,34 @@ Release date: 2026-11-03. Coordinates: `dev.brikk.duckdb:quack-jdbc:0.12.1`.
 The annotated `v0.12.1` tag identifies the release commit. Publication follows
 the normal tag-triggered CI / Maven Central / GitHub Release workflow.
 
+## Publication confirmation
+
+- Release commit: `cca8445a66a6491c444745bf3c10387cc19b9a94`, directly on top
+  of the owner's funding-only `fc17ca757988eb74b8d9c1c989517b3ba9ea703b`.
+- Tag: [`v0.12.1`](https://github.com/brikk/duckdb-quack-jdbc/releases/tag/v0.12.1),
+  a normal release, not a draft or prerelease.
+- [Release CI](https://github.com/brikk/duckdb-quack-jdbc/actions/runs/41567582143)
+  succeeded. Both Java 17 signed-server oracle profiles passed **750 tests, zero
+  failures/errors, one optional preview skip**, and 17/17 required integration
+  classes / 55 reports. The two local IPv6/address skips did not occur in CI.
+- Central deployment `2d87c8d0-59c5-4f70-9d32-076adecc2953` reached **published**
+  at 2026-11-03 02:52:35 UTC. Coordinates: `dev.brikk.duckdb:quack-jdbc:0.12.1`.
+- The public Central POM, binary JAR and detached signature were retrieved from
+  `https://repo.maven.apache.org/maven2/dev/brikk/duckdb/quack-jdbc/0.12.1/`.
+  A second resolution through Maven with a fresh isolated local repository
+  produced the identical JAR. Embedded Maven version/group/artifact metadata
+  matched; every published class has major version 61 (Java 17).
+- **Central binary JAR SHA256:**
+  `fcf2a7a54ef302044569504216c546088b7ab3521f599911861359c044bf72c3`.
+  This is the Central artifact hash, not the hash of the separately packaged
+  GitHub release asset (the normal workflow builds those in a different job).
+- Public resolution evidence is in `/tmp/opencode/quack-0121-evidence/central/`,
+  including `maven-resolution.log` and `SHA256SUMS`; release CI output is in
+  `release-ci.log` beside it. `verify-central.sh` records the independent checks.
+
+After successful publication and public resolution, main advances to
+**0.12.2-SNAPSHOT**; the release tag remains on the immutable 0.12.1 commit.
+
 ## Regression evidence
 
 Desired-behavior tests were added and run **before changing driver code**.
