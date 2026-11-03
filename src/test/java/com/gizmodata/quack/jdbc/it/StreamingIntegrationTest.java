@@ -290,40 +290,39 @@ public class StreamingIntegrationTest {
     }
 
     @Test
-    void sequenceEncodingProducesTypedVector() throws Exception {
+    void sequenceEncodingPreservesCompactTypedValues() throws Exception {
         // range() returns BIGINT and DuckDB encodes it as a SEQUENCE vector.
-        // We must materialize that as a LongVec (primitive long[]), not
-        // ObjectVec — otherwise the memory benefit vanishes for SELECT i FROM range().
+        // Keep SEQUENCE compact. Servers are also free to emit ordinary FLAT vectors.
         try (QuackConnection c = connect();
              QuackSession.Cursor cursor = c.session().cursor("SELECT i FROM range(0, 1000) t(i)")) {
             DataChunk chunk = cursor.nextChunk();
             assertNotNull(chunk);
-            assertTrue(chunk.columns().get(0) instanceof DecodedVector.LongVec,
-                    "expected SEQUENCE → LongVec, got "
+            assertTrue(chunk.columns().get(0) instanceof DecodedVector.LongSequenceVec
+                            || chunk.columns().get(0) instanceof DecodedVector.LongVec,
+                    "expected compact SEQUENCE or FLAT BIGINT, got "
                             + chunk.columns().get(0).getClass().getSimpleName());
             // Spot-check a couple of values
-            DecodedVector.LongVec vec = (DecodedVector.LongVec) chunk.columns().get(0);
-            assertEquals(0L, vec.values()[0]);
-            if (vec.size() > 5) assertEquals(5L, vec.values()[5]);
+            DecodedVector vec = chunk.columns().get(0);
+            assertEquals(0L, vec.getObject(0));
+            if (vec.size() > 5) assertEquals(5L, vec.getLong(5));
         }
     }
 
     @Test
     void constantEncodingProducesTypedVector() throws Exception {
         // SELECT <literal> FROM range(n) often emits a CONSTANT-encoded vector.
-        // Whatever the server chooses, we should land on an IntVec for a
-        // literal INTEGER repeated across rows.
+        // Preserve a compact constant or typed flat INTEGER, whichever the server sends.
         try (QuackConnection c = connect();
              QuackSession.Cursor cursor = c.session().cursor("SELECT 42::INTEGER AS x FROM range(0, 1000)")) {
             DataChunk chunk = cursor.nextChunk();
             assertNotNull(chunk);
-            // Either FLAT or CONSTANT, both must land in IntVec.
-            assertTrue(chunk.columns().get(0) instanceof DecodedVector.IntVec,
-                    "expected typed IntVec, got "
+            assertTrue(chunk.columns().get(0) instanceof DecodedVector.IntVec
+                            || chunk.columns().get(0) instanceof DecodedVector.ConstantVec,
+                    "expected compact CONSTANT or FLAT INTEGER, got "
                             + chunk.columns().get(0).getClass().getSimpleName());
-            DecodedVector.IntVec vec = (DecodedVector.IntVec) chunk.columns().get(0);
-            assertEquals(42, vec.values()[0]);
-            assertEquals(42, vec.values()[vec.size() - 1]);
+            DecodedVector vec = chunk.columns().get(0);
+            assertEquals(42, vec.getObject(0));
+            assertEquals(42, vec.getInt(vec.size() - 1));
         }
     }
 

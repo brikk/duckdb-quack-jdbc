@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Keep INTEGER/BIGINT SEQUENCE and primitive BOOLEAN/numeric CONSTANT vectors
+  compact during decoding, rather than allocating arrays proportional to logical
+  row count. Decode budgets charge their stored representation; default limits,
+  flat/object decoding, dictionary projection budgets and nesting checks remain
+  unchanged. Large compressed ranges can now be read with small fixed heaps.
+- JDBC types/values are unchanged, including null constants and APPEND round trips.
+  The low-level sealed DecodedVector interface gains IntSequenceVec,
+  LongSequenceVec and ConstantVec; callers assuming numeric vectors always have
+  array backing, or exhaustively switching on variants, may need to adapt.
+  See [the large-result checklist and evidence](dev-docs/BIG_RESULTS_TODO.md)
+  for scope and remaining server/chunk-decoding work.
+
 ## [0.12.1] — 2026-11-03
 
 ### Fixed

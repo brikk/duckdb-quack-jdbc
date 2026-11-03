@@ -54,3 +54,13 @@ and lifecycle behavior; 0.12.1 does not change decoder behavior.
   multiple FETCHes where appropriate; also cover wide string and nested results.
 - Reconcile the catalog's string-decoder stack with its exact submitted SQL and
   wire types before treating it as a distinct type-decoding defect.
+
+## First implementation phase
+
+The `quack-big-results` branch implements compact INTEGER/BIGINT SEQUENCE and
+primitive CONSTANT decoding without a server change or raised limit defaults.
+The BIGINT reproduction and primitive constants now pass full reads and safe
+early close in a 64 MiB JVM. This does not solve generic wide/nested/flat batch
+memory, lazy dictionary projection, or outbound APPEND buffering. The branch's
+[topic checklist and verification evidence](BIG_RESULTS_TODO.md) tracks both
+the completed scope and remaining work; 0.12.1 itself is unchanged.

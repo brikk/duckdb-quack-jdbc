@@ -1,6 +1,9 @@
 package com.gizmodata.quack.jdbc.message;
 
 import com.gizmodata.quack.jdbc.type.LogicalType;
+import com.gizmodata.quack.jdbc.type.LogicalTypeId;
+
+import java.util.Objects;
 
 /**
  * Decoded representation of a single column from a {@link DataChunk}.
@@ -11,7 +14,8 @@ import com.gizmodata.quack.jdbc.type.LogicalType;
  * representation is not a primitive (DATE → {@code LocalDate},
  * TIMESTAMP → {@code LocalDateTime}, DECIMAL → {@code BigDecimal},
  * VARCHAR / BLOB / nested types, etc.) fall through to
- * {@link ObjectVec}.
+ * {@link ObjectVec}. INTEGER/BIGINT sequences and primitive constants keep
+ * compact representations instead of allocating an array per logical row.
  *
  * <p>Null handling: {@code validity} is a bit-packed {@code long[]}
  * with row {@code N}'s bit at position {@code N % 64} of
@@ -63,6 +67,66 @@ public sealed interface DecodedVector {
     default double getDouble(int row) {
         Object v = getObject(row);
         return v == null ? 0d : ((Number) v).doubleValue();
+    }
+
+    /** INTEGER arithmetic progression, preserving the existing int narrowing semantics. */
+    record IntSequenceVec(LogicalType type, int size, long start, long increment) implements DecodedVector {
+        public IntSequenceVec {
+            if (type.id() != LogicalTypeId.INTEGER || size < 0) {
+                throw new IllegalArgumentException("Invalid INTEGER sequence type or size");
+            }
+        }
+        @Override public boolean isNull(int row) { Objects.checkIndex(row, size); return false; }
+        @Override public Object getObject(int row) { return Integer.valueOf(getInt(row)); }
+        @Override public int getInt(int row) {
+            Objects.checkIndex(row, size);
+            return (int) (start + increment * row);
+        }
+        @Override public long getLong(int row) { return getInt(row); }
+        @Override public double getDouble(int row) { return getInt(row); }
+    }
+
+    /** BIGINT arithmetic progression; multiplication/addition retain two's-complement wrapping. */
+    record LongSequenceVec(LogicalType type, int size, long start, long increment) implements DecodedVector {
+        public LongSequenceVec {
+            if (type.id() != LogicalTypeId.BIGINT || size < 0) {
+                throw new IllegalArgumentException("Invalid BIGINT sequence type or size");
+            }
+        }
+        @Override public boolean isNull(int row) { Objects.checkIndex(row, size); return false; }
+        @Override public Object getObject(int row) { return Long.valueOf(getLong(row)); }
+        @Override public long getLong(int row) {
+            Objects.checkIndex(row, size);
+            return start + increment * row;
+        }
+        @Override public double getDouble(int row) { return getLong(row); }
+    }
+
+    /** One immutable primitive wrapper (or null), without an expanded array or validity mask. */
+    record ConstantVec(LogicalType type, int size, Object value) implements DecodedVector {
+        public ConstantVec {
+            Class<?> expected = valueClass(type);
+            if (size < 0 || expected == null || value != null && !expected.isInstance(value)) {
+                throw new IllegalArgumentException("Invalid primitive constant type, size or value");
+            }
+        }
+        @Override public boolean isNull(int row) { Objects.checkIndex(row, size); return value == null; }
+        @Override public Object getObject(int row) { Objects.checkIndex(row, size); return value; }
+
+        // Deliberately excludes object/unsigned-64/temporal/nested types. Keep
+        // wrapper classes identical to their corresponding flat vectors.
+        static Class<?> valueClass(LogicalType type) {
+            return switch (type.id()) {
+                case BOOLEAN -> Boolean.class;
+                case TINYINT -> Byte.class;
+                case SMALLINT, UTINYINT -> Short.class;
+                case INTEGER, USMALLINT -> Integer.class;
+                case BIGINT, UINTEGER -> Long.class;
+                case FLOAT -> Float.class;
+                case DOUBLE -> Double.class;
+                default -> null;
+            };
+        }
     }
 
     record BoolVec(LogicalType type, boolean[] values, long[] validity) implements DecodedVector {

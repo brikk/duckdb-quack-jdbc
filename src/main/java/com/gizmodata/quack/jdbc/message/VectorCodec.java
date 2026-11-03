@@ -40,9 +40,9 @@ import java.util.UUID;
  * DECIMAL → {@code BigDecimal}, VARCHAR/BLOB, nested types, etc.) fall
  * through to {@link DecodedVector.ObjectVec}.
  *
- * <p>CONSTANT, DICTIONARY, and SEQUENCE vector encodings currently
- * materialize into {@code ObjectVec}; they're uncommon enough in real
- * workloads that the additional code path didn't pay for itself yet.
+ * <p>INTEGER/BIGINT SEQUENCE and primitive CONSTANT vectors remain compact.
+ * Other compressed representations retain their existing eager materialization;
+ * dictionary projections remain typed arrays when the logical type is primitive.
  */
 public final class VectorCodec {
 
@@ -75,9 +75,13 @@ public final class VectorCodec {
             int vectorTypeId = reader.readOptionalField(90, reader::readUlebInt, VectorType.FLAT.wireId());
             VectorType vectorType = VectorType.fromWireId(vectorTypeId);
             PhysicalTypeUtil.getPhysicalType(type); // Validate metadata for every encoding, including SEQUENCE.
-            // Arrays, masks, selections and wrappers are charged even for nulls and projections.
-            // Scalar conversions and nested containers are charged where they materialize.
-            reader.reserve(128L + 32L * count);
+            // Compact vectors store a descriptor rather than row-sized arrays.
+            // Keep the existing conservative per-row allowance for every eager
+            // encoding, including dictionaries whose source happens to be lazy.
+            boolean compact = (vectorType == VectorType.SEQUENCE
+                    && (type.id() == LogicalTypeId.INTEGER || type.id() == LogicalTypeId.BIGINT))
+                    || (vectorType == VectorType.CONSTANT && DecodedVector.ConstantVec.valueClass(type) != null);
+            reader.reserve(128L + (compact ? 0 : 32L * count));
             DecodedVector result = switch (vectorType) {
                 case FLAT -> decodeFlatVector(reader, type, count);
                 case FSST -> throw new QuackUnsupportedTypeException(
@@ -94,6 +98,23 @@ public final class VectorCodec {
     private static DecodedVector broadcastConstant(BinaryReader reader, LogicalType type, int count) {
         DecodedVector single = decodeVectorBody(reader, type, count > 0 ? 1 : 0);
         Object value = single.size() == 0 ? null : single.getObject(0);
+        if (DecodedVector.ConstantVec.valueClass(type) != null) {
+            // Inline SEQUENCE sources for narrower/floating logical types use
+            // the existing int64 conversion path. Match the old broadcast's
+            // numeric narrowing rather than exposing that source wrapper.
+            if (value != null && !DecodedVector.ConstantVec.valueClass(type).isInstance(value)) {
+                value = switch (type.id()) {
+                    case TINYINT -> Byte.valueOf(((Number) value).byteValue());
+                    case SMALLINT, UTINYINT -> Short.valueOf(((Number) value).shortValue());
+                    case INTEGER, USMALLINT -> Integer.valueOf(((Number) value).intValue());
+                    case BIGINT, UINTEGER -> Long.valueOf(((Number) value).longValue());
+                    case FLOAT -> Float.valueOf(((Number) value).floatValue());
+                    case DOUBLE -> Double.valueOf(((Number) value).doubleValue());
+                    default -> value;
+                };
+            }
+            return new DecodedVector.ConstantVec(type, count, value);
+        }
         return broadcastValueTyped(type, value, count);
     }
 
@@ -181,6 +202,22 @@ public final class VectorCodec {
     /** Project a dictionary onto a selection vector, preserving the dictionary's storage type. */
     private static DecodedVector projectTyped(LogicalType type, DecodedVector dictionary, int[] selection) {
         int count = selection.length;
+        // The projection itself remains eager and already has its per-row
+        // budget. Compact sources must not turn typed projections into boxed
+        // Object[] arrays merely because their backing representation changed.
+        if (dictionary instanceof DecodedVector.ConstantVec d) {
+            return broadcastValueTyped(type, d.value(), count);
+        }
+        if (dictionary instanceof DecodedVector.IntSequenceVec d) {
+            int[] arr = new int[count];
+            for (int i = 0; i < count; i++) arr[i] = d.getInt(selection[i]);
+            return new DecodedVector.IntVec(type, arr, null);
+        }
+        if (dictionary instanceof DecodedVector.LongSequenceVec d) {
+            long[] arr = new long[count];
+            for (int i = 0; i < count; i++) arr[i] = d.getLong(selection[i]);
+            return new DecodedVector.LongVec(type, arr, null);
+        }
         if (dictionary instanceof DecodedVector.BoolVec d) {
             boolean[] arr = new boolean[count];
             long[] validity = null;
@@ -271,28 +308,13 @@ public final class VectorCodec {
         return new DecodedVector.ObjectVec(type, arr);
     }
 
-    /** Materialize an arithmetic-progression sequence into the right vector for the logical type. */
+    /** Keep integer sequences compact; other logical conversions remain eager and budgeted. */
     private static DecodedVector sequenceTyped(LogicalType type, int count, long start, long increment) {
-        // INTEGER and BIGINT get the typed primitive path; other types (DATE,
-        // TIMESTAMP, BIGINT-via-decimal) materialize into ObjectVec because the
-        // Java value type isn't a primitive.
         if (type.id() == LogicalTypeId.INTEGER) {
-            int[] arr = new int[count];
-            long v = start;
-            for (int i = 0; i < count; i++) {
-                arr[i] = (int) v;
-                v += increment;
-            }
-            return new DecodedVector.IntVec(type, arr, null);
+            return new DecodedVector.IntSequenceVec(type, count, start, increment);
         }
         if (type.id() == LogicalTypeId.BIGINT) {
-            long[] arr = new long[count];
-            long v = start;
-            for (int i = 0; i < count; i++) {
-                arr[i] = v;
-                v += increment;
-            }
-            return new DecodedVector.LongVec(type, arr, null);
+            return new DecodedVector.LongSequenceVec(type, count, start, increment);
         }
         Object[] values = new Object[count];
         boolean temporal = switch (type.id()) {
@@ -937,6 +959,9 @@ public final class VectorCodec {
     }
 
     private static long[] extractValidity(DecodedVector vector) {
+        if (vector instanceof DecodedVector.ConstantVec v) {
+            return v.value() == null && v.size() > 0 ? new long[Validity.wordCount(v.size())] : null;
+        }
         if (vector instanceof DecodedVector.BoolVec v) return v.validity();
         if (vector instanceof DecodedVector.ByteVec v) return v.validity();
         if (vector instanceof DecodedVector.ShortVec v) return v.validity();

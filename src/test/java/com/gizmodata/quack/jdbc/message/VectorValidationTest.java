@@ -35,17 +35,17 @@ class VectorValidationTest {
             new ExtraTypeInfo.ListInfo(INT, Optional.empty()));
 
     @Test
-    void hugeCompressedCountsAreRejectedBeforePayloadReadingOrAllocation() {
+    void hugeEagerCompressedCountsAreRejectedBeforePayloadReadingOrAllocation() {
         for (int encoding : new int[]{2, 3, 4}) {
             byte[] wire = new Wire().field(90).u(encoding).end().bytes();
             for (int count : new int[]{-1, Integer.MAX_VALUE}) {
                 QuackProtocolException error = assertThrows(QuackProtocolException.class,
-                        () -> decode(wire, INT, count, 4096, 64));
+                        () -> decode(wire, LogicalType.of(LogicalTypeId.DATE), count, 4096, 64));
                 assertTrue(error.getMessage().contains(count < 0 ? "Negative" : "maxDecodedBytes"));
             }
         }
         byte[] dictionary = new Wire().field(90).u(3).field(91).blob(le32(0))
-                .field(92).u(Integer.MAX_VALUE).field(90).u(2).end().bytes();
+                .field(92).u(Integer.MAX_VALUE).field(90).u(0).end().bytes();
         assertBudgetFailure(dictionary, INT, 1, 4096);
         // Structural allowance alone is insufficient: DATE conversion costs 32 per valid slot.
         LogicalType date = LogicalType.of(LogicalTypeId.DATE);
@@ -111,14 +111,15 @@ class VectorValidationTest {
         LocalDateTime epoch = LocalDateTime.of(1970, 1, 1, 0, 0);
         for (SequenceCase fixture : cases) {
             for (int count : new int[]{0, 63, 64, 65}) {
-                long exact = 256 + (32L + fixture.cost()) * count;
+                boolean compact = fixture.type().id() == LogicalTypeId.INTEGER || fixture.type().id() == LogicalTypeId.BIGINT;
+                long exact = 256 + (compact ? 0 : (32L + fixture.cost()) * count);
                 assertAll("SEQUENCE " + fixture.type() + ", count=" + count, () -> {
                     byte[] wire = sequence();
                     assertBudgetFailure(wire, fixture.type(), count, exact - 1);
                     DecodedVector vector = decode(wire, fixture.type(), count, exact, 64);
                     Class<? extends DecodedVector> vectorClass = switch (fixture.type().id()) {
-                        case INTEGER -> DecodedVector.IntVec.class;
-                        case BIGINT -> DecodedVector.LongVec.class;
+                        case INTEGER -> DecodedVector.IntSequenceVec.class;
+                        case BIGINT -> DecodedVector.LongSequenceVec.class;
                         default -> DecodedVector.ObjectVec.class;
                     };
                     assertInstanceOf(vectorClass, vector);

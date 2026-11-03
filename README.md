@@ -199,6 +199,15 @@ charged only for non-null materializations; array storage is charged for every
 row. Compressed projections charge their source values once, and SEQUENCE
 charges its actual int64 conversion path. Valid but very large messages may
 still exceed these defaults.
+
+**Development after 0.12.1:** INTEGER/BIGINT sequences and primitive BOOLEAN/
+numeric constants now retain compact descriptors instead of expanded row arrays.
+Their decode budget reflects that storage. Other encodings and object-valued
+constants retain their previous eager behavior and limits; a small serialized
+batch still is not a general decoded-memory bound. JDBC values/metadata remain
+unchanged. Low-level DecodedVector callers must allow compact variants rather
+than assume numeric array backing. See [large-result scope and remaining work](dev-docs/BIG_RESULTS_TODO.md).
+
 Tune both byte limits for the available heap and concurrent connections;
 HTTP buffering/copies and application-retained results use additional memory.
 These are per-message limits, not a process-wide memory cap. They do not fix

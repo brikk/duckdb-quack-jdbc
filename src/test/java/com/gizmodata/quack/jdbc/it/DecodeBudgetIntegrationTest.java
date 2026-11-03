@@ -15,6 +15,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -28,6 +30,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -76,6 +79,74 @@ class DecodeBudgetIntegrationTest {
         }
         fetches.set(0);
         return connection;
+    }
+
+    @Test
+    void fortyMillionRowRangeAndConstantFitDefaultLimitsAnd64MiBHeap() throws Exception {
+        try (var connection = (QuackConnection) java.sql.DriverManager.getConnection(server.jdbcUrl())) {
+            if (connection.session().protocolVersion() != 3) return;
+        }
+        Process child = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-Xmx64m", "-XX:+ExitOnOutOfMemoryError", "-cp",
+                System.getProperty("surefire.test.class.path", System.getProperty("java.class.path")),
+                DecodeBudgetIntegrationTest.class.getName(), server.jdbcUrl()).redirectErrorStream(true).start();
+        try {
+            assertTrue(child.waitFor(90, TimeUnit.SECONDS), "fixed-heap live query timed out");
+            String output = new String(child.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            System.out.println(output);
+            assertEquals(0, child.exitValue(), output);
+            assertTrue(output.contains("40 million sequence and constant rows fit 64 MiB heap"), output);
+        } finally {
+            child.destroyForcibly();
+            child.waitFor(5, TimeUnit.SECONDS);
+        }
+    }
+
+    public static void main(String[] args) throws Exception {
+        try (Connection connection = java.sql.DriverManager.getConnection(args[0]);
+             Statement statement = connection.createStatement()) {
+            statement.execute("SET quack_target_batch_bytes=1048576");
+            connection.setAutoCommit(false);
+            for (String projection : new String[]{"i", "42::INTEGER"}) {
+                try (ResultSet rows = statement.executeQuery("SELECT " + projection + " FROM range(40000000) t(i)")) {
+                    long count = 0;
+                    while (rows.next()) {
+                        long expected = projection.equals("i") ? count : 42;
+                        if (rows.getLong(1) != expected) throw new AssertionError("wrong row " + count);
+                        count++;
+                    }
+                    if (count != 40_000_000) throw new AssertionError("wrong row count " + count);
+                }
+            }
+            // Also exercise 0.12.1's safe early-close drain in this bounded heap.
+            try (ResultSet rows = statement.executeQuery("SELECT i FROM range(40000000) t(i)")) {
+                if (!rows.next() || rows.getLong(1) != 0L) throw new AssertionError("missing first row");
+            }
+            try (ResultSet rows = statement.executeQuery("SELECT 42")) {
+                if (!rows.next() || rows.getInt(1) != 42) throw new AssertionError("transaction poisoned");
+            }
+            connection.rollback();
+        }
+        System.out.println("40 million sequence and constant rows fit 64 MiB heap");
+    }
+
+    @Test
+    void appendDecodedSequencesAndConstantsPreservesTypesAndNulls() throws Exception {
+        try (var connection = (QuackConnection) java.sql.DriverManager.getConnection(server.jdbcUrl());
+             Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TEMP TABLE compact_append(i BIGINT, v INTEGER, n BIGINT)");
+            try (var source = connection.session().cursor(
+                    "SELECT i, 42::INTEGER, NULL::BIGINT FROM range(3) t(i)")) {
+                for (var chunk : source.drainAll()) connection.session().appendChunk("main", "compact_append", chunk);
+            }
+            try (ResultSet rows = statement.executeQuery("SELECT count(*),sum(i),sum(v),count(n) FROM compact_append")) {
+                assertTrue(rows.next());
+                assertEquals(3, rows.getInt(1));
+                assertEquals(3, rows.getLong(2));
+                assertEquals(126, rows.getLong(3));
+                assertEquals(0, rows.getInt(4), "An all-null compact constant must not become zero values");
+            }
+        }
     }
 
     @Test
