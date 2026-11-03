@@ -639,3 +639,18 @@ The [GitHub release](https://github.com/brikk/duckdb-quack-jdbc/releases/tag/v0.
 also contains binary, sources, Javadoc, and checksum assets. This release uses
 the implementation from the user-confirmed snapshot; only version and release
 documentation changed. DuckBridge was not modified as part of publication.
+
+## Transaction-safe early result close (2026-11-03)
+
+Version **0.12.1** fixes unfinished result streams silently poisoning manual
+transactions on the next PREPARE. Healthy result close now drains and discards
+through terminal FETCH in both commit modes; completed results do not fetch.
+Closing a large result can therefore block for the remaining execution/transfer.
+Closing FETCH failures are SQLException, not ignored; no SQL replay or implicit
+CANCEL is introduced. Explicit cancellation, heartbeat and bounded DISCONNECT
+semantics remain unchanged, and the bytecode floor remains Java 17.
+
+See [the 0.12.1 release report](RELEASE_0.12.1.md) for red-then-green regressions,
+the signed-server byte hashes, full Java 17/21 oracle verification, and the
+separate [compressed-range decode-budget follow-up](DECODE_BUDGET_FOLLOWUP.md).
+No downstream catalog/Trino/Doris adoption is included in this release.

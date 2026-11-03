@@ -82,6 +82,27 @@ class QuackCancellationTest {
     }
 
     @Test
+    void cancelAndHeartbeatCanPassABlockedClosingFetch() throws Exception {
+        FakeServer server = new FakeServer();
+        server.blockFetch = true;
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        try (var connection = server.connect(); var statement = connection.createStatement();
+             var result = statement.executeQuery("SELECT streaming")) {
+            Future<?> closing = worker.submit(() -> { result.close(); return null; });
+            assertTrue(server.fetching.await(2, TimeUnit.SECONDS));
+            connection.session().sendHeartbeat();
+            statement.cancel();
+            assertCancelled(closing);
+            assertTrue(result.isClosed());
+            assertEquals(1, server.cancels.get());
+            assertTrue(statement.execute("SELECT recovered"));
+        } finally {
+            server.release.countDown();
+            worker.shutdownNow();
+        }
+    }
+
+    @Test
     void cancelRejectsRowsAlreadyInTheJdbcChunkAndDoesNotCancelANewerStatement() throws Exception {
         FakeServer server = new FakeServer();
         try (var connection = server.connect(); var old = connection.createStatement();

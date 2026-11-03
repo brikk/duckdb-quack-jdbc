@@ -104,11 +104,17 @@ public final class QuackResultSet extends SkeletalResultSet {
     }
 
     @Override
-    public void close() {
+    public void close() throws SQLException {
+        if (closed) return;
         closed = true;
         currentChunk = null;
         rowInChunk = -1;
-        cursor.close();
+        try {
+            cursor.close();
+        } catch (RuntimeException e) {
+            throw new SQLException("Failed to close result rows: " + e.getMessage(),
+                    e instanceof QuackCancelledException ? "57014" : null, e);
+        }
     }
 
     @Override

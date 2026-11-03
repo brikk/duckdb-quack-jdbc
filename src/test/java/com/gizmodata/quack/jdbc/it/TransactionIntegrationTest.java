@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.condition.EnabledIf;
+import org.junit.jupiter.api.RepeatedTest;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -50,6 +51,48 @@ public class TransactionIntegrationTest {
 
     private Connection connect() throws SQLException {
         return DriverManager.getConnection(server.jdbcUrl());
+    }
+
+    @RepeatedTest(6)
+    void earlyCloseDoesNotPoisonManualTransaction() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            c.setAutoCommit(false);
+            try (ResultSet rows = s.executeQuery("SELECT 1; "
+                    + "SELECT sum(sqrt(i::DOUBLE)) FROM range(10000000) t(i)")) {
+                assertTrue(rows.next());
+                assertEquals(1, rows.getInt(1));
+            }
+            try (ResultSet next = s.executeQuery("SELECT 42")) {
+                assertTrue(next.next());
+                assertEquals(42, next.getInt(1));
+            }
+            c.commit();
+        }
+    }
+
+    @Test
+    void unreadMultiBatchResultsCanCloseReexecuteOrCommitWithoutPoisoning() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement(); Statement other = c.createStatement()) {
+            if (((QuackConnection) c).session().protocolVersion() == 3) {
+                s.execute("SET quack_target_batch_bytes=65536");
+            }
+            c.setAutoCommit(false);
+            String sql = "SELECT hash(i) FROM range(100000) t(i)";
+            // Leave both local rows and server batches unread.
+            try (ResultSet rows = s.executeQuery(sql)) { assertTrue(rows.next()); }
+            s.executeQuery(sql);
+            try (ResultSet next = s.executeQuery("SELECT 42")) {
+                assertTrue(next.next());
+                assertEquals(42, next.getInt(1));
+            }
+            s.executeQuery(sql);
+            try (ResultSet next = other.executeQuery("SELECT 43")) {
+                assertTrue(next.next());
+                assertEquals(43, next.getInt(1));
+            }
+            s.executeQuery(sql);
+            c.commit();
+        }
     }
 
     @Test

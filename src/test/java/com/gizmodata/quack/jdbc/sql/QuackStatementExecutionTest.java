@@ -38,9 +38,11 @@ class QuackStatementExecutionTest {
             ResultSet previous = statement.executeQuery("SELECT 10 AS value");
             assertTrue(previous.next());
             assertEquals(10, previous.getInt(1));
+            assertEquals(0, transport.fetches, "Result consumption stays lazy");
             transport.beforePrepare = () -> assertDoesNotThrow(() -> assertReset(statement, previous));
 
             ResultSet current = statement.executeQuery("SELECT 20 AS value");
+            assertEquals(1, transport.fetches, "Re-execution must finish the previous stream");
             assertNotSame(previous, current);
             assertTrue(previous.isClosed());
             assertThrows(SQLException.class, previous::next);
@@ -274,6 +276,7 @@ class QuackStatementExecutionTest {
             assertTrue(last.isClosed());
             assertThrows(SQLException.class, () -> statement.execute("SELECT 5 AS value"));
             assertEquals(4, transport.statements.size());
+            assertEquals(3, transport.fetches, "Each unfinished query must reach terminal FETCH");
         }
     }
 
@@ -294,7 +297,7 @@ class QuackStatementExecutionTest {
         LogicalType type = LogicalType.of(LogicalTypeId.BIGINT);
         DataChunk chunk = new DataChunk(1, List.of(type),
                 List.of(new DecodedVector.LongVec(type, new long[]{value}, null)));
-        // Leave query cursors fetchable so closing an unread result must not fetch or drain it.
+        // Leave query cursors fetchable: early/implicit close must finish them.
         return new QuackMessage.PrepareResponse(MessageHeader.of(MessageType.PREPARE_RESPONSE),
                 List.of(type), List.of(update ? "Count" : "value"), !update,
                 List.of(chunk), new HugeIntParts(17, 23));
@@ -304,6 +307,8 @@ class QuackStatementExecutionTest {
         private final Deque<Object> replies;
         private final List<String> statements = new ArrayList<>();
         private Runnable beforePrepare = () -> { };
+        private boolean needsFetch;
+        private int fetches;
 
         private ScriptedTransport(Object... replies) {
             this.replies = new ArrayDeque<>(List.of(replies));
@@ -317,12 +322,22 @@ class QuackStatementExecutionTest {
                         Optional.empty(), Optional.empty(), Optional.empty());
             }
             if (request instanceof QuackMessage.PrepareRequest prepare) {
+                assertFalse(needsFetch, "The preceding stream must finish before PREPARE");
                 statements.add(prepare.sql());
                 beforePrepare.run();
                 assertFalse(replies.isEmpty(), "Unexpected SQL: " + prepare.sql());
                 Object reply = replies.removeFirst();
                 if (reply instanceof RuntimeException failure) throw failure;
+                needsFetch = ((QuackMessage.PrepareResponse) reply).needsMoreFetch();
                 return (QuackMessage) reply;
+            }
+            if (request instanceof QuackMessage.FetchRequest fetch) {
+                assertTrue(needsFetch, "No extra FETCH after a completed result");
+                assertEquals(new HugeIntParts(17, 23), fetch.resultUuid());
+                needsFetch = false;
+                fetches++;
+                return new QuackMessage.FetchResponse(MessageHeader.of(MessageType.FETCH_RESPONSE),
+                        List.of(), Optional.empty());
             }
             if (request instanceof QuackMessage.DisconnectMessage) {
                 return new QuackMessage.SuccessResponse(MessageHeader.of(MessageType.SUCCESS_RESPONSE));

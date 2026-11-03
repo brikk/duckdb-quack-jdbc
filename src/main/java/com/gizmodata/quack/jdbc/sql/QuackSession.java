@@ -48,6 +48,7 @@ public final class QuackSession implements AutoCloseable {
     // a newer PREPARE cannot cross the server's separate UUID-check and abort steps.
     private final Object queryGate = new Object();
     private Query currentQuery;
+    private Cursor currentCursor;
     private volatile String connectionId;
     private volatile Optional<String> serverDuckdbVersion = Optional.empty();
     private volatile long protocolVersion = QuackConstants.QUACK_VERSION;
@@ -244,6 +245,7 @@ public final class QuackSession implements AutoCloseable {
 
     private Cursor cursor(String sql, Optional<Long> inlineRows, Query query) {
         checkUsable();
+        finishPreviousStream();
         synchronized (queryGate) {
             checkUsable();
             query.checkCancelled();
@@ -270,11 +272,20 @@ public final class QuackSession implements AutoCloseable {
             if (protocolVersion == 3 && !prep.resultUuid().equals(request.queryUuid())) {
                 throw new QuackProtocolException("PREPARE returned a different query UUID");
             }
-            return new Cursor(this, prep, query);
+            Cursor cursor = new Cursor(this, prep, query);
+            currentCursor = cursor;
+            return cursor;
         } catch (RuntimeException e) {
             query.done = true;
             throw query.failure(e);
         }
+    }
+
+    private void finishPreviousStream() {
+        // A new PREPARE aborts an unfinished producer on the server, which can
+        // invalidate a manual transaction. Do not hold queryGate across FETCH:
+        // cancellation and heartbeats must still be able to make progress.
+        if (currentCursor != null) currentCursor.finishStream();
     }
 
     void cancel(Query query) {
@@ -368,6 +379,7 @@ public final class QuackSession implements AutoCloseable {
         if (chunk == null) {
             throw new QuackProtocolException("appendChunk: chunk is required");
         }
+        finishPreviousStream();
         if (connection != null) {
             try {
                 connection.beginTransactionIfNeeded();
@@ -442,21 +454,29 @@ public final class QuackSession implements AutoCloseable {
         // Zero inline rows lets PREPARE return once the stream is bound,
         // rather than blocking until SEND_DATA has supplied the first batch.
         try (Cursor result = cursor(sql, Optional.of(0L))) {
-            QuackMessage response = send(new QuackMessage.SendDataRequest(
-                    MessageHeader.of(MessageType.SEND_DATA_REQUEST)
-                            .withConnectionId(connectionId).withClientQueryId(nextQueryId()),
-                    streamId, List.of(sendChunk), Optional.of(1L), Optional.empty()));
-            if (!(response instanceof QuackMessage.SendDataResponse)) {
-                throw new QuackProtocolException("Expected SEND_DATA_RESPONSE, got "
-                        + response.getClass().getSimpleName());
-            }
-            response = send(new QuackMessage.SendDataRequest(
-                    MessageHeader.of(MessageType.SEND_DATA_REQUEST)
-                            .withConnectionId(connectionId).withClientQueryId(nextQueryId()),
-                    streamId, List.of(), Optional.empty(), Optional.of(1L)));
-            if (!(response instanceof QuackMessage.SendDataResponse)) {
-                throw new QuackProtocolException("Expected terminal SEND_DATA_RESPONSE, got "
-                        + response.getClass().getSimpleName());
+            try {
+                QuackMessage response = send(new QuackMessage.SendDataRequest(
+                        MessageHeader.of(MessageType.SEND_DATA_REQUEST)
+                                .withConnectionId(connectionId).withClientQueryId(nextQueryId()),
+                        streamId, List.of(sendChunk), Optional.of(1L), Optional.empty()));
+                if (!(response instanceof QuackMessage.SendDataResponse)) {
+                    throw new QuackProtocolException("Expected SEND_DATA_RESPONSE, got "
+                            + response.getClass().getSimpleName());
+                }
+                response = send(new QuackMessage.SendDataRequest(
+                        MessageHeader.of(MessageType.SEND_DATA_REQUEST)
+                                .withConnectionId(connectionId).withClientQueryId(nextQueryId()),
+                        streamId, List.of(), Optional.empty(), Optional.of(1L)));
+                if (!(response instanceof QuackMessage.SendDataResponse)) {
+                    throw new QuackProtocolException("Expected terminal SEND_DATA_RESPONSE, got "
+                            + response.getClass().getSimpleName());
+                }
+            } catch (RuntimeException e) {
+                // An incomplete upload may still be waiting for client input:
+                // FETCH cannot finish it. Preserve the original error and the
+                // existing failed-upload cleanup, with no retry or CANCEL.
+                result.closeLocally();
+                throw e;
             }
             result.drainAll(); // surface any late INSERT failure
         }
@@ -667,6 +687,9 @@ public final class QuackSession implements AutoCloseable {
                 checkCancelled();
                 return next;
             } catch (RuntimeException e) {
+                // A failed FETCH may already have advanced the server. Never
+                // retry it during close or before the next statement.
+                fetchState.hasMore = false;
                 if (query != null) throw query.failure(e);
                 throw e;
             }
@@ -698,14 +721,34 @@ public final class QuackSession implements AutoCloseable {
 
         @Override
         public void close() {
+            if (closed) return;
+            try {
+                finishStream();
+            } finally {
+                closeLocally();
+            }
+        }
+
+        private void closeLocally() {
             closed = true;
             if (query != null) query.done = true;
             buffered.clear();
-            // Quack has no explicit "release result" message yet; the server
-            // releases state on DISCONNECT or after all chunks have been
-            // fetched. Drain in the background if needed to free server-side
-            // state, but for now leave any un-fetched chunks to be reaped on
-            // disconnect — closing a JDBC ResultSet shouldn't block.
+        }
+
+        /**
+         * Finish, rather than interrupt, the server's producer. Discard unread
+         * batches one at a time, in both commit modes. This may block for the
+         * remaining query; ordinary request timeouts and explicit CANCEL apply.
+         * Already cancelled, disconnected or invalidated sessions need no FETCH.
+         */
+        private void finishStream() {
+            if (closed || session.closed || session.isInvalidated()
+                    || query != null && query.cancelled) return;
+            if (!fetchState.hasMore) return;
+            buffered.clear();
+            while (fetchState.hasMore) {
+                for (DataChunk chunk : fetch()) materializedRowCount += chunk.rowCount();
+            }
         }
     }
 

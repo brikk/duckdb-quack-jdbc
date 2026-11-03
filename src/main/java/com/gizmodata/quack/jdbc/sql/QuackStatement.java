@@ -106,8 +106,9 @@ public class QuackStatement extends SkeletalStatement {
             boolean countResult = looksLikeRowsAffected(sql, cursor, first);
             query.checkCancelled();
             if (countResult) {
-                updateCount = extractRowsAffected(first);
+                int count = extractRowsAffected(first);
                 cursor.close();
+                updateCount = count;
                 currentResultSet = null;
                 return false;
             }
@@ -183,22 +184,21 @@ public class QuackStatement extends SkeletalStatement {
      * count instead of {@code -1}.
      */
     @Override
-    public boolean getMoreResults() {
+    public boolean getMoreResults() throws SQLException {
         resetExecutionState();
         return false;
     }
 
     /** Discard the previous execution before transaction start or parameter validation can fail. */
-    protected void resetExecutionState() {
-        if (currentResultSet != null) {
-            currentResultSet.close();
-            currentResultSet = null;
-        }
+    protected void resetExecutionState() throws SQLException {
+        QuackResultSet previous = currentResultSet;
+        currentResultSet = null;
         updateCount = -1;
+        if (previous != null) previous.close();
     }
 
     @Override
-    public boolean getMoreResults(int current) {
+    public boolean getMoreResults(int current) throws SQLException {
         // KEEP_CURRENT_RESULT / CLOSE_ALL_RESULTS only matter with multiple
         // open result sets, which Quack never produces. Behave like the
         // no-arg form so the drain loop terminates.
@@ -206,7 +206,7 @@ public class QuackStatement extends SkeletalStatement {
     }
 
     @Override
-    public void close() {
+    public void close() throws SQLException {
         if (closed) return;
         closed = true;
         if (currentResultSet != null) {

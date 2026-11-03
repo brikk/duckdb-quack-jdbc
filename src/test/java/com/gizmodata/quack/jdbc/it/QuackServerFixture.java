@@ -13,7 +13,10 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -66,7 +69,7 @@ public final class QuackServerFixture implements AutoCloseable {
         Path log = home.resolve("server.log");
         Path versionLog = home.resolve("cli-version.log");
         Files.writeString(log, "CLI=" + duckdb + "\nrequired=" + required
-                + "\nextension_directory=" + extensions + "\n");
+                + "\nextension_directory=" + extensions + "\nCLI SHA256=" + sha256(duckdb) + "\n");
         System.out.println("Quack fixture: CLI=" + duckdb + ", log=" + log);
 
         Process version = isolatedProcess(List.of(duckdb.toString(), "--version"), home)
@@ -139,12 +142,28 @@ public final class QuackServerFixture implements AutoCloseable {
                 validateIdentity(identity, extensionDirectory, required);
                 String canonicalPath = "Canonical install path=" + Path.of(identity.installPath()).toRealPath();
                 Files.writeString(logFile, canonicalPath + "\n", StandardOpenOption.APPEND);
+                Files.writeString(logFile, identity.name() + " SHA256=" + sha256(Path.of(identity.installPath()))
+                        + "\n", StandardOpenOption.APPEND);
                 System.out.println("Quack fixture " + canonicalPath);
                 count++;
             }
             if (count != 2) throw new IOException("Expected loaded Quack and httpfs, found " + count);
         } catch (SQLException e) {
             throw new IOException("Stock Quack identity qualification failed", e);
+        }
+    }
+
+    private static String sha256(Path path) throws IOException {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (var input = Files.newInputStream(path)) {
+                byte[] buffer = new byte[8192];
+                int count;
+                while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count);
+            }
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException e) {
+            throw new IOException("SHA-256 unavailable", e);
         }
     }
 

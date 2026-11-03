@@ -130,6 +130,21 @@ class QuackSessionInvalidationTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
+    void failedUploadNeverFetchesAProducerStillWaitingForClientInput(boolean throwsError) {
+        ScriptedTransport server = new ScriptedTransport(3, throwsError);
+        try (var session = QuackSession.connect(URI, server)) {
+            server.fail(MessageType.SEND_DATA_REQUEST, false);
+            QuackServerException error = assertThrows(QuackServerException.class,
+                    () -> session.appendChunk("main", "t", CHUNK));
+            assertEquals("database failed", error.getServerMessage());
+            assertFalse(session.isInvalidated());
+            assertFalse(server.requests.contains(MessageType.FETCH_REQUEST));
+            assertFalse(server.requests.contains(MessageType.CANCEL_REQUEST));
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
     void fatalErrorOnTheLegacyAppendPathAlsoInvalidates(boolean throwsError) {
         ScriptedTransport server = new ScriptedTransport(1, throwsError);
         try (var session = QuackSession.connect(URI, server)) {

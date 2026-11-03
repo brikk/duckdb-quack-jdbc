@@ -6,6 +6,46 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.1] — 2026-11-03
+
+### Fixed
+
+- Finish unfinished result streams before closing or superseding them. Previously
+  an early ResultSet close (including a one-row probe with `needsMoreFetch=true`)
+  left the producer running; the next PREPARE interrupted it and silently aborted
+  a manual transaction. Close now discards unread batches synchronously through
+  terminal FETCH, in both commit modes, retaining at most one batch at a time.
+  A completed inline result sends no extra FETCH. New statements, transaction
+  commands and APPEND also finish the preceding stream before proceeding.
+- Surface closing FETCH failures as SQLException, including statement re-execution,
+  Statement.close and getMoreResults; clear old result/update state even if closing
+  fails. Failed FETCHes are never retried. No SQL replay or implicit CANCEL is used.
+
+### Compatibility
+
+- Closing an unfinished result can now block for its remaining execution and
+  transfer. There is no aggregate drain deadline or row limit; normal per-request
+  timeouts and decode limits apply. Explicit Statement.cancel remains available
+  during result closing, with its existing transaction/rollback semantics, and
+  heartbeats continue. Connection.close still uses bounded best-effort DISCONNECT,
+  without draining. After a server error, callers remain responsible for rollback;
+  after an uncertain transport/decode failure, discard the connection rather than
+  retrying SQL automatically. The Java 17 bytecode floor is unchanged.
+  Concrete QuackResultSet/QuackStatement close and getMoreResults methods now
+  declare SQLException, as the JDBC interfaces already do; source callers using
+  the concrete types may need to handle that checked exception.
+
+### Testing
+
+- Regressions were confirmed red before driver changes: 8/10 scripted v1/v3 cases
+  failed and the signed DuckDB 2.0.0 reproduction failed 6/6 with an aborted
+  transaction. All pass after the fix. Full matched-oracle verification passes
+  on Java 17 and 21 against signed DuckDB 1.5.6/v1 and 2.0.0/v3: 750 tests per
+  combination, zero failures/errors, three known optional/environment skips,
+  and 17/17 required integration classes. Every production class remains Java
+  17 bytecode. Exact server/extension SHA256s and evidence paths are in
+  [the release report](dev-docs/RELEASE_0.12.1.md).
+
 ## [0.12.0] — 2026-10-31
 
 ### Fixed
