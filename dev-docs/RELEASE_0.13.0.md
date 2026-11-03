@@ -5,6 +5,38 @@ The owner requested the normal tag-driven release, Maven Central publication,
 public artifact resolution and subsequent `0.13.1-SNAPSHOT` development version.
 The immutable `v0.13.0` tag identifies the release commit.
 
+## Publication confirmation
+
+- Release commit: `aad8bdf7f207c0b6bdb40dadf23485ea7169610e`.
+- [Tag / GitHub Release v0.13.0](https://github.com/brikk/duckdb-quack-jdbc/releases/tag/v0.13.0)
+  is a normal release, not a draft or prerelease, with binary/sources/Javadocs
+  and checksum assets.
+- [Release CI](https://github.com/brikk/duckdb-quack-jdbc/actions/runs/41574633227)
+  succeeded. Both signed-server Java 17 oracle suites passed **762 tests, zero
+  failures/errors, one optional preview skip**, and all 17 required integration
+  classes / 56 reports. The two local IPv6/address skips did not occur in CI.
+- Central deployment `27da1679-304a-4551-bf7e-8b3b531eef59` reached **published**
+  at 2026-11-03 04:03:09 UTC. Coordinates: `dev.brikk.duckdb:quack-jdbc:0.13.0`.
+- Public POM, JAR, detached signature, sources and Javadocs were retrieved from
+  `https://repo.maven.apache.org/maven2/dev/brikk/duckdb/quack-jdbc/0.13.0/`.
+  Fresh Maven resolution into an isolated local repository produced the identical
+  binary JAR. Embedded Maven coordinates/version match, every class is major 61
+  (Java 17), and all three compact-vector variants are present.
+- **Central binary JAR SHA256:**
+  `0935b75d3aa86a320b9f1d0330fbd8dfa551c4c2505aa11cc1be612dfdf455e0`.
+  This is the Central artifact, not the separately packaged GitHub asset.
+- The actual downloaded Central JAR, with no local production classes on its
+  classpath, passed full 40-million-row range and constant reads plus manual-
+  transaction early-close/reuse at **-Xmx64m**, against the signed DuckDB 2.0.0
+  fixture. This checks the published artifact, not merely the workspace build.
+- Evidence: `/tmp/opencode/quack-0130-evidence/central/` (public artifacts,
+  `maven-resolution.log`, `SHA256SUMS`), `release-ci.log`,
+  `published-memory-smoke.log`, `verify-central.sh` and `PublishedMemorySmoke.java`.
+
+After successful publication, independent Central resolution and the published-
+artifact memory smoke test, main advances to **0.13.1-SNAPSHOT**. The release tag
+remains on the immutable 0.13.0 commit.
+
 ## Source and version scope
 
 Implementation commit `6ac36307fe5ea45275c1ba404e294e5b6e0fb74b` was fast-forwarded
