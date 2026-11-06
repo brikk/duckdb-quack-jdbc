@@ -670,3 +670,16 @@ lazy dictionaries and chunk-at-a-time decoding remain separate work. See the
 [0.13.0 release report](RELEASE_0.13.0.md) for native byte hashes, red/green evidence,
 release verification and publication details, and the
 [topic checklist](BIG_RESULTS_TODO.md) for remaining work.
+
+## Closed-channel no-replay patch in 0.13.1 (2026-11-06)
+
+Version **0.13.1** stops address fallback after ClosedChannelException: a POST may
+already have executed, so only genuine ConnectException/HttpConnectTimeoutException
+may select another resolved address. The original failure is surfaced. HTTPS's
+single hostname-preserving candidate, body cleanup, control timeouts, v1/v3 wire
+formats and Java 17 bytecode remain unchanged.
+
+See [the release report](RELEASE_0.13.1.md) for deterministic red/green retry tests,
+the signed-server oracle matrix and publication details. The owner explicitly
+defers server-side upstream work until it is available in a binary release; this
+client patch does not change server pins or adopt unmerged server proposals.

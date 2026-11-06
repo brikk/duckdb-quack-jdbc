@@ -21,7 +21,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpRequest.BodyPublishers;
 import java.net.http.HttpResponse;
 import java.net.http.HttpResponse.BodyHandlers;
-import java.nio.channels.ClosedChannelException;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Map;
@@ -140,7 +139,9 @@ public final class QuackHttpTransport implements QuackTransport {
             HttpResponse<InputStream> response;
             try {
                 response = httpClient.send(httpRequest, BodyHandlers.ofInputStream());
-            } catch (ConnectException | HttpConnectTimeoutException | ClosedChannelException e) {
+            } catch (ConnectException | HttpConnectTimeoutException e) {
+                // Only connection-establishment failures prove the POST was not
+                // accepted. A closed channel is ambiguous and must not replay it.
                 lastFailure = e;
                 continue;
             } catch (IOException e) {

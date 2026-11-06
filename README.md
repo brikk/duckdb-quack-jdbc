@@ -12,7 +12,7 @@ familiar `jdbc:quack://` URL.
 [![GitHub Repo](https://img.shields.io/badge/github-brikk%2Fduckdb--quack--jdbc-181717?logo=github)](https://github.com/brikk/duckdb-quack-jdbc)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **Status:** Experimental / alpha. Version `0.13.0` supports both Quack v1
+> **Status:** Experimental / alpha. Version `0.13.1` supports both Quack v1
 > for DuckDB 1.5.x and Quack v3 for released DuckDB 2.0.0.
 
 | DuckDB server | Quack protocol | Verification |
@@ -20,11 +20,11 @@ familiar `jdbc:quack://` URL.
 | 1.5.5 and released 1.5.6 | v1 | Full integration tests against signed core Quack; 1.5.6 also tested with native `duckdb_jdbc` 1.5.6.0 as an oracle. |
 | 2.0.0-alpha45672 | v3 | Full integration tests against signed core Quack `974927a394`; **prerelease only**. |
 | 2.0.0-alpha48630 | v3 | Full default suite passed against signed core Quack `e7a9be3f8c`. |
-| Released 2.0.0 | v3 | Full version-matched oracle suite passes against signed core Quack `f96420ed46`; see [0.13.0 verification](dev-docs/RELEASE_0.13.0.md). |
+| Released 2.0.0 | v3 | Full version-matched oracle suite passes against signed core Quack `f96420ed46`; see [0.13.1 verification](dev-docs/RELEASE_0.13.1.md). |
 
 The v1 path remains backwards-compatible with DuckDB 1.5.x's Quack protocol;
 other 1.5.x patch releases have not all been separately certified. Version
-`0.6.0` supports **v1 only**; use `0.13.0` for both v1 and v3. DuckDB's native
+`0.6.0` supports **v1 only**; use `0.13.1` for both v1 and v3. DuckDB's native
 JDBC 2.0.0.0 temporarily reports its new `TUPLE` type as `String`/`Types.OTHER`
 because it does not yet map that type. This driver deliberately preserves
 positional `Struct`/`Types.STRUCT` for tuples, as it did in 0.8.0; this is an
@@ -46,7 +46,7 @@ and released 2.0.0's [`f96420ed`](https://github.com/duckdb/duckdb/blob/v2.0.0/.
 v3 batches are byte-sized and may contain more rows than the PREPARE inline-row
 hint; the driver inlines a first batch to retain JDBC DML/error behavior.
 The signed DuckDB 2.0.0 extension and native JDBC 2.0.0.0 oracle are covered
-by the 0.13.0 verification suite.
+by the 0.13.1 verification suite.
 
 ## Quickstart
 
@@ -66,7 +66,7 @@ with `duckdb -unsigned`.)
 
 ### 2. Add the driver to your project
 
-The examples below use version `0.13.0` (Quack v1 and v3).
+The examples below use version `0.13.1` (Quack v1 and v3).
 
 **Maven:**
 
@@ -74,14 +74,14 @@ The examples below use version `0.13.0` (Quack v1 and v3).
 <dependency>
     <groupId>dev.brikk.duckdb</groupId>
     <artifactId>quack-jdbc</artifactId>
-    <version>0.13.0</version>
+    <version>0.13.1</version>
 </dependency>
 ```
 
 **Gradle:**
 
 ```groovy
-implementation "dev.brikk.duckdb:quack-jdbc:0.13.0"
+implementation "dev.brikk.duckdb:quack-jdbc:0.13.1"
 ```
 
 **Direct jar download** (for DBeaver, DataGrip, or any tool that takes a `.jar`):
@@ -230,6 +230,16 @@ closure, not invalidation; closing an invalidated connection sends no request.
 Ordinary query errors and legacy errors without the flag do not invalidate
 the session. The original `QuackServerException` (retained in the JDBC cause chain)
 retains `getExceptionType()`, `getExtraInfo()`, and `mustInvalidate()`.
+
+### Safer address fallback in 0.13.1
+
+Plain HTTP tries another resolved address only after a genuine connection failure
+(`ConnectException` or `HttpConnectTimeoutException`). Since 0.13.1,
+`ClosedChannelException` is not retried: a server may already have accepted the
+POST, so retrying could execute a write twice or advance a FETCH twice. The
+original failure is surfaced; do not automatically replay uncertain SQL.
+HTTPS continues to use its original hostname and single candidate. Response-body
+failures, CANCEL/DISCONNECT budgets and existing cleanup behavior are unchanged.
 
 ### Early result close in 0.12.1
 

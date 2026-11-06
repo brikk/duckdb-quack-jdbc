@@ -6,6 +6,39 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.1] — 2026-11-06
+
+### Fixed
+
+- Never retry an HTTP POST at another resolved address after
+  ClosedChannelException: the server may already have accepted a write or
+  advanced a FETCH. Surface the original failure instead of risking duplicate
+  execution. Genuine ConnectException/HttpConnectTimeoutException address fallback
+  remains available. Response-body failures and CANCEL/DISCONNECT remain
+  single-attempt, and their existing timeout and cleanup behavior is unchanged.
+
+### Compatibility
+
+- This changes the plain-HTTP multiple-address fallback path. HTTPS still keeps
+  its original hostname and single candidate for TLS verification. An uncertain
+  closed-channel operation now fails rather than potentially succeeding through
+  a replay; do not automatically retry writes after that failure.
+- No Quack wire format, server pin, server-side behavior, timeout setting,
+  decoded-memory default or Java 17 bytecode-floor change is included. Upstream
+  server-side proposals remain out of scope until they ship in a binary release.
+
+### Testing
+
+- Deterministic two-address child-JVM regressions were confirmed red before the
+  fix: 7/22 cases replayed an uncertain operation. All 22 now pass, including
+  preserved genuine connect-failure fallback and single-attempt control/body
+  failures. No external DNS or real SQL execution is needed for these tests.
+- Full release-version signed-server oracle verification passes on Java 17 and
+  21 against DuckDB 1.5.6/v1 and 2.0.0/v3: 784 tests per combination, zero
+  failures/errors, three known optional/environment skips, all 17 required
+  integration classes and Java 17 bytecode. See
+  [the release report](dev-docs/RELEASE_0.13.1.md) for evidence and scope.
+
 ## [0.13.0] — 2026-11-03
 
 ### Changed
