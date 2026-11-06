@@ -6,23 +6,44 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-11-06
+
 ### Changed
 
 - Wire field ids are named: `WireField` plus one enum per serialized object in
   `MessageFields`, `ChunkFields` and `TypeFields`. Protocol errors for a
   mismatched required field now report the field name, e.g. `ROW_COUNT(100)`.
-  The `int` overloads on `BinaryReader`/`BinaryWriter` remain.
+  The `int` overloads on `BinaryReader`/`BinaryWriter` remain. No bytes on the
+  wire change.
 - `ResultSet` conversions are strict: `getBoolean` accepts booleans, numbers
   and the strings `true/t/1` and `false/f/0` (case-insensitive) and throws
   `SQLException` for anything else, instead of returning `false`.
   `getBigDecimal`, `getDate`, `getTime` and `getTimestamp` throw `SQLException`
   for unconvertible values instead of leaking `NumberFormatException` or
-  `IllegalArgumentException`.
+  `IllegalArgumentException`. Their plain and `Calendar` overloads now share
+  one parser, so the plain forms also trim surrounding whitespace.
 
 ### Removed
 
 - `QuackSession.connect(QuackUri, QuackTransportFactory)`; call
-  `connect(uri, factory.create(uri))`.
+  `connect(uri, factory.create(uri))`. The `QuackSession(QuackUri,
+  QuackHttpTransport)` constructor is still retained for binary compatibility.
+
+### Compatibility
+
+- Callers that relied on `getBoolean` returning `false` for non-boolean
+  columns, or that caught `IllegalArgumentException`/`NumberFormatException`
+  from temporal or decimal getters, must now handle `SQLException`.
+- No Quack wire format, server pin, timeout, decoded-memory default or Java 17
+  bytecode-floor change is included.
+
+### Testing
+
+- New regressions pin the strict conversions and the named-field error text.
+- Signed-server oracle verification passes against DuckDB 1.5.6/v1 and released
+  2.0.0/v3 (Quack `f96420e`, native JDBC oracle 2.0.0.0): 787 tests per
+  combination, zero failures/errors, the three known optional/environment skips,
+  all 17 required integration classes.
 
 ## [0.13.1] — 2026-11-06
 

@@ -7,7 +7,7 @@
 
     <groupId>dev.brikk.duckdb</groupId>
     <artifactId>quack-jdbc</artifactId>
-    <version>0.13.2-SNAPSHOT</version>
+    <version>0.14.0</version>
     <packaging>jar</packaging>
 
     <name>quack-jdbc</name>

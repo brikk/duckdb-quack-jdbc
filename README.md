@@ -12,7 +12,7 @@ familiar `jdbc:quack://` URL.
 [![GitHub Repo](https://img.shields.io/badge/github-brikk%2Fduckdb--quack--jdbc-181717?logo=github)](https://github.com/brikk/duckdb-quack-jdbc)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **Status:** Experimental / alpha. Version `0.13.1` supports both Quack v1
+> **Status:** Experimental / alpha. Version `0.14.0` supports both Quack v1
 > for DuckDB 1.5.x and Quack v3 for released DuckDB 2.0.0.
 
 | DuckDB server | Quack protocol | Verification |
@@ -24,7 +24,7 @@ familiar `jdbc:quack://` URL.
 
 The v1 path remains backwards-compatible with DuckDB 1.5.x's Quack protocol;
 other 1.5.x patch releases have not all been separately certified. Version
-`0.6.0` supports **v1 only**; use `0.13.1` for both v1 and v3. DuckDB's native
+`0.6.0` supports **v1 only**; use `0.14.0` for both v1 and v3. DuckDB's native
 JDBC 2.0.0.0 temporarily reports its new `TUPLE` type as `String`/`Types.OTHER`
 because it does not yet map that type. This driver deliberately preserves
 positional `Struct`/`Types.STRUCT` for tuples, as it did in 0.8.0; this is an
@@ -66,7 +66,7 @@ with `duckdb -unsigned`.)
 
 ### 2. Add the driver to your project
 
-The examples below use version `0.13.1` (Quack v1 and v3).
+The examples below use version `0.14.0` (Quack v1 and v3).
 
 **Maven:**
 
@@ -74,14 +74,14 @@ The examples below use version `0.13.1` (Quack v1 and v3).
 <dependency>
     <groupId>dev.brikk.duckdb</groupId>
     <artifactId>quack-jdbc</artifactId>
-    <version>0.13.1</version>
+    <version>0.14.0</version>
 </dependency>
 ```
 
 **Gradle:**
 
 ```groovy
-implementation "dev.brikk.duckdb:quack-jdbc:0.13.1"
+implementation "dev.brikk.duckdb:quack-jdbc:0.14.0"
 ```
 
 **Direct jar download** (for DBeaver, DataGrip, or any tool that takes a `.jar`):
@@ -557,6 +557,12 @@ Cast such values to VARCHAR in SQL when their textual representation is needed.
 Null validity is checked before payload conversion; a signed-min payload with
 validity set remains finite where representable. TIMETZ still returns its
 existing lossless packed `Long`, not a new OffsetTime representation.
+
+Since 0.14.0, `ResultSet` getters never coerce silently: `getBoolean` accepts
+booleans, numbers and the strings `true/t/1` and `false/f/0` (case-insensitive);
+`getBigDecimal`, `getDate`, `getTime` and `getTimestamp` accept matching
+temporal/numeric values or their strict textual form. Anything else throws
+`SQLException` rather than returning `false` or an unchecked exception.
 
 The `Calendar` overloads of `getDate`, `getTime`, `getTimestamp`, `setDate`,
 `setTime`, and `setTimestamp` use the supplied timezone for supported temporal
