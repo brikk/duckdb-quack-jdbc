@@ -122,6 +122,9 @@ public final class QuackServerFixture implements AutoCloseable {
         ProcessBuilder builder = new ProcessBuilder(command).redirectErrorStream(true);
         builder.environment().put("HOME", home.toString());
         builder.environment().put("XDG_CONFIG_HOME", home.toString());
+        // DuckDB 2.0 switches to agent output when AI_AGENT, CLAUDECODE, etc. are
+        // set and stdout is piped, prefixing --version and reformatting results.
+        builder.environment().put("DUCKDB_AGENT_MODE", "0");
         return builder;
     }
 

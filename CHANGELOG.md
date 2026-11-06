@@ -40,6 +40,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Testing
 
 - New regressions pin the strict conversions and the named-field error text.
+- The integration fixture starts the DuckDB CLI with `DUCKDB_AGENT_MODE=0`, so
+  DuckDB 2.0's agent output mode (triggered by `AI_AGENT`, `CLAUDECODE` and
+  similar variables in the caller's shell) cannot alter `--version` or query
+  output.
 - Signed-server oracle verification passes against DuckDB 1.5.6/v1 and released
   2.0.0/v3 (Quack `f96420e`, native JDBC oracle 2.0.0.0): 787 tests per
   combination, zero failures/errors, the three known optional/environment skips,
