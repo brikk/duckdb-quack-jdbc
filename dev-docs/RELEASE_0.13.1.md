@@ -5,6 +5,42 @@ The owner requested the narrow client fix and normal verified release; the
 immutable `v0.13.1` tag identifies the release commit. Preparation starts from
 main `d8bfd7432c5f1503bd3b574ab2a1fbdbcee75661` (0.13.1-SNAPSHOT after 0.13.0).
 
+## Publication confirmation
+
+- Release commit: `f57818d8caec503095f3daf246e145390cf3921f`.
+- [Tag / GitHub Release v0.13.1](https://github.com/brikk/duckdb-quack-jdbc/releases/tag/v0.13.1)
+  is a normal release, not a draft or prerelease, with binary, sources, Javadocs
+  and checksum assets.
+- [Release CI](https://github.com/brikk/duckdb-quack-jdbc/actions/runs/42264798373)
+  succeeded. Both signed-server Java 17 oracle suites passed **784 tests, zero
+  failures/errors, one optional preview skip**, with 17/17 required integration
+  classes and 57 reports. The two local IPv6/address skips did not occur in CI.
+- The first publishing attempt failed while downloading Maven from Apache
+  (`curl` connection reset); Deploy was skipped and no upload began. Only the
+  failed publisher and dependent release job were rerun, using the same verified
+  commit and tag. Neither test suite failed and no tag was moved.
+- Central deployment `5c9a5526-45aa-44c7-b334-7758f85e2b8e` reached **published**
+  at 2026-11-06 18:03:20 UTC. Coordinates: `dev.brikk.duckdb:quack-jdbc:0.13.1`.
+- Public POM, binary JAR, detached signature, sources and Javadocs were retrieved
+  from `https://repo.maven.apache.org/maven2/dev/brikk/duckdb/quack-jdbc/0.13.1/`.
+  Independent Maven resolution into a fresh isolated local repository produced
+  the identical binary JAR. Embedded coordinates/version match; all production
+  classes remain major version 61 (Java 17).
+- **Central binary JAR SHA256:**
+  `24e3a8ac9bd257d6ee0ebe80b9f582030b208924748cd6711dfc2fcf097e694d`.
+  This is the Central artifact hash, not the separately packaged GitHub asset.
+- All **22 replay/fallback/control checks pass against the actual downloaded
+  Central JAR**, with no local production classes on the test classpath. Closed
+  channels produce one send; genuine connection failures retain two-address
+  fallback with only one simulated accepted operation.
+- Evidence: `/tmp/opencode/quack-0131-evidence/central/` (public artifacts,
+  `maven-resolution.log`, `SHA256SUMS`), `published-replay-smoke.log`,
+  `release-ci.log`, `release-ci-attempt1.log`, `release-ci-failed.log`,
+  `verify-central.sh` and `published-replay-smoke.sh`.
+
+After successful publication, public resolution and published-JAR checks,
+main advances to **0.13.2-SNAPSHOT**. The release tag remains immutable.
+
 ## Fix and compatibility
 
 `QuackHttpTransport.send` previously grouped ClosedChannelException with genuine
