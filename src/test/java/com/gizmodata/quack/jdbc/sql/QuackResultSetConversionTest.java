@@ -309,6 +309,60 @@ class QuackResultSetConversionTest {
         }
     }
 
+    @Test
+    void booleanReadsAcceptDuckdbSpellingsAndRejectEverythingElse() throws Exception {
+        for (String s : new String[]{"true", "TRUE", "t", "1"}) {
+            try (var rs = result(LogicalTypeId.VARCHAR, s)) {
+                assertTrue(rs.next());
+                assertTrue(rs.getBoolean(1));
+                assertEquals(Boolean.TRUE, rs.getObject(1, Boolean.class));
+            }
+        }
+        for (String s : new String[]{"false", "F", "0"}) {
+            try (var rs = result(LogicalTypeId.VARCHAR, s)) {
+                assertTrue(rs.next());
+                assertFalse(rs.getBoolean(1));
+                assertEquals(Boolean.FALSE, rs.getObject(1, Boolean.class));
+            }
+        }
+        try (var rs = result(LogicalTypeId.VARCHAR, "yes")) {
+            assertTrue(rs.next());
+            assertThrows(SQLException.class, () -> rs.getBoolean(1));
+            assertThrows(SQLException.class, () -> rs.getObject(1, Boolean.class));
+        }
+        try (var rs = result(LogicalTypeId.DATE, LocalDate.of(2024, 1, 2))) {
+            assertTrue(rs.next());
+            assertThrows(SQLException.class, () -> rs.getBoolean(1));
+        }
+    }
+
+    @Test
+    void unconvertibleValuesRaiseSqlExceptionNotRuntimeExceptions() throws Exception {
+        Calendar cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
+        try (var rs = result(LogicalTypeId.VARCHAR, "not a value")) {
+            assertTrue(rs.next());
+            assertThrows(SQLException.class, () -> rs.getBigDecimal(1));
+            assertThrows(SQLException.class, () -> rs.getDate(1));
+            assertThrows(SQLException.class, () -> rs.getDate(1, cal));
+            assertThrows(SQLException.class, () -> rs.getTime(1));
+            assertThrows(SQLException.class, () -> rs.getTime(1, cal));
+            assertThrows(SQLException.class, () -> rs.getTimestamp(1));
+            assertThrows(SQLException.class, () -> rs.getTimestamp(1, cal));
+        }
+        try (var rs = result(LogicalTypeId.BLOB, new byte[]{1, 2})) {
+            assertTrue(rs.next());
+            assertThrows(SQLException.class, () -> rs.getBigDecimal(1));
+            assertThrows(SQLException.class, () -> rs.getDate(1));
+            assertThrows(SQLException.class, () -> rs.getTime(1));
+            assertThrows(SQLException.class, () -> rs.getTimestamp(1));
+        }
+        try (var rs = result(LogicalTypeId.VARCHAR, " 2024-01-02 03:04:05.5 ")) {
+            assertTrue(rs.next());
+            assertEquals(LocalDateTime.of(2024, 1, 2, 3, 4, 5, 500_000_000),
+                    rs.getTimestamp(1).toLocalDateTime());
+        }
+    }
+
     private static QuackResultSet result(LogicalTypeId id, Object value) {
         LogicalType type = LogicalType.of(id);
         DataChunk chunk = new DataChunk(1, List.of(type), List.of(

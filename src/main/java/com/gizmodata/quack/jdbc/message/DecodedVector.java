@@ -113,8 +113,8 @@ public sealed interface DecodedVector {
         @Override public boolean isNull(int row) { Objects.checkIndex(row, size); return value == null; }
         @Override public Object getObject(int row) { Objects.checkIndex(row, size); return value; }
 
-        // Deliberately excludes object/unsigned-64/temporal/nested types. Keep
-        // wrapper classes identical to their corresponding flat vectors.
+        // Only types whose flat vector is primitive-backed; the box must match
+        // what that flat vector's getObject returns.
         static Class<?> valueClass(LogicalType type) {
             return switch (type.id()) {
                 case BOOLEAN -> Boolean.class;

@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Wire field ids are named: `WireField` plus one enum per serialized object in
+  `MessageFields`, `ChunkFields` and `TypeFields`. Protocol errors for a
+  mismatched required field now report the field name, e.g. `ROW_COUNT(100)`.
+  The `int` overloads on `BinaryReader`/`BinaryWriter` remain.
+- `ResultSet` conversions are strict: `getBoolean` accepts booleans, numbers
+  and the strings `true/t/1` and `false/f/0` (case-insensitive) and throws
+  `SQLException` for anything else, instead of returning `false`.
+  `getBigDecimal`, `getDate`, `getTime` and `getTimestamp` throw `SQLException`
+  for unconvertible values instead of leaking `NumberFormatException` or
+  `IllegalArgumentException`.
+
+### Removed
+
+- `QuackSession.connect(QuackUri, QuackTransportFactory)`; call
+  `connect(uri, factory.create(uri))`.
+
 ## [0.13.1] — 2026-11-06
 
 ### Fixed

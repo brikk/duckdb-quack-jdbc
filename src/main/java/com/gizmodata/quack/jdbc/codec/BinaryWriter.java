@@ -57,6 +57,10 @@ public final class BinaryWriter {
         body.run();
     }
 
+    public void writeField(WireField field, Runnable body) {
+        writeField(field.id(), body);
+    }
+
     public void writeFieldId(int fieldId) {
         if (fieldId < 0 || fieldId > 0xFFFF) {
             throw new QuackProtocolException("Invalid field id " + fieldId);

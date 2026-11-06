@@ -67,22 +67,19 @@ public final class QuackSession implements AutoCloseable {
         this.connection = connection;
     }
 
+    /** Binary compatibility: callers compiled before QuackHttpTransport implemented QuackTransport. */
     public QuackSession(QuackUri uri, QuackHttpTransport transport) {
         this(uri, (QuackTransport) transport);
     }
 
     public static QuackSession connect(QuackUri uri) {
-        return connect(uri, QuackTransportFactory.http());
+        return connect(uri, QuackTransportFactory.http().create(uri));
     }
 
     public static QuackSession connect(QuackUri uri, QuackTransport transport) {
         QuackSession session = new QuackSession(uri, transport);
         session.handshake();
         return session;
-    }
-
-    public static QuackSession connect(QuackUri uri, QuackTransportFactory transportFactory) {
-        return connect(uri, transportFactory, null);
     }
 
     static QuackSession connect(QuackUri uri, QuackTransportFactory transportFactory,
@@ -228,11 +225,7 @@ public final class QuackSession implements AutoCloseable {
      * demand as the caller calls {@link Cursor#nextChunk()}.
      */
     public Cursor cursor(String sql) {
-        return cursor(sql, Optional.empty());
-    }
-
-    private Cursor cursor(String sql, Optional<Long> inlineRows) {
-        return cursor(sql, inlineRows, newQuery());
+        return cursor(sql, Optional.empty(), newQuery());
     }
 
     Query newQuery() {
@@ -453,7 +446,7 @@ public final class QuackSession implements AutoCloseable {
                 + SqlLiteral.render(streamId) + ", " + prototype + ")";
         // Zero inline rows lets PREPARE return once the stream is bound,
         // rather than blocking until SEND_DATA has supplied the first batch.
-        try (Cursor result = cursor(sql, Optional.of(0L))) {
+        try (Cursor result = cursor(sql, Optional.of(0L), newQuery())) {
             try {
                 QuackMessage response = send(new QuackMessage.SendDataRequest(
                         MessageHeader.of(MessageType.SEND_DATA_REQUEST)
@@ -472,9 +465,8 @@ public final class QuackSession implements AutoCloseable {
                             + response.getClass().getSimpleName());
                 }
             } catch (RuntimeException e) {
-                // An incomplete upload may still be waiting for client input:
-                // FETCH cannot finish it. Preserve the original error and the
-                // existing failed-upload cleanup, with no retry or CANCEL.
+                // An incomplete upload may still be waiting for client input,
+                // so FETCH cannot finish it: close locally, no retry or CANCEL.
                 result.closeLocally();
                 throw e;
             }

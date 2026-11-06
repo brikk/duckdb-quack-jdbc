@@ -12,10 +12,10 @@ DuckDB server with a familiar `jdbc:quack://host:port?token=…` URL.
 
 ```
 com.gizmodata.quack.jdbc
-├── codec/        BinaryReader, BinaryWriter, HugeIntParts, QuackConstants
-├── type/         LogicalType, LogicalTypeId, PhysicalType, ExtraTypeInfo, codec
+├── codec/        BinaryReader, BinaryWriter, HugeIntParts, QuackConstants, WireField
+├── type/         LogicalType, LogicalTypeId, PhysicalType, ExtraTypeInfo, codec, TypeFields
 ├── message/      MessageType, MessageHeader, QuackMessage (sealed), MessageCodec,
-│                 DataChunk, DecodedVector, VectorCodec
+│                 DataChunk, DecodedVector, VectorCodec, MessageFields, ChunkFields
 ├── transport/    QuackUri (URL parser), QuackHttpTransport (java.net.http)
 ├── sql/          QuackDriver, QuackConnection, QuackStatement,
 │                 QuackPreparedStatement, QuackResultSet,
@@ -85,6 +85,11 @@ cross-reference DuckDB's `src/main/java/org/duckdb/DuckDBDatabaseMetaData.java`.
   No pattern-matching switches; use `instanceof` chains.
 - No runtime dependencies. JDK `java.net.http.HttpClient` for transport.
 - No emoji in code, javadocs, or commit messages.
+- Comments explain a deviation from the norm, never the history of a change.
+  A reason for doing something unusual belongs in the code; what the previous
+  version did belongs in git.
+- Wire field ids are never bare integers: add a constant to `MessageFields`,
+  `ChunkFields` or `TypeFields` (one enum per serialized object).
 - Throw `SQLFeatureNotSupportedException` for unimplemented JDBC surface
   (see the `Skeletal*` base classes).
 - DBeaver compatibility is a hard requirement — when changing

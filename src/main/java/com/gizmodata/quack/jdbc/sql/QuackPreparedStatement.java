@@ -5,7 +5,6 @@ import java.io.EOFException;
 import java.io.InputStream;
 import java.io.Reader;
 import java.math.BigDecimal;
-import java.math.BigInteger;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.sql.Array;
@@ -26,16 +25,11 @@ import java.sql.SQLXML;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Collections;
 import java.util.List;
-import java.util.UUID;
 
 public class QuackPreparedStatement extends QuackStatement implements PreparedStatement {
 
@@ -224,7 +218,6 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
     @Override
     public void addBatch() throws SQLException {
         validateParameters(parameters);
-        // Snapshot the current parameter binding for later replay.
         paramBatch.add(new ArrayList<>(parameters));
     }
 
@@ -400,13 +393,5 @@ public class QuackPreparedStatement extends QuackStatement implements PreparedSt
         }
         if (max >= 0 && sb.length() != max) throw new EOFException("Reader ended before the declared length: " + max);
         return sb.toString();
-    }
-
-    @SuppressWarnings("unused")
-    private static class Markers {
-        // referenced types for static analyzers
-        static final Class<?>[] T = {Calendar.class, LocalDate.class, LocalTime.class,
-                LocalDateTime.class, OffsetDateTime.class, BigInteger.class, UUID.class,
-                SQLFeatureNotSupportedException.class};
     }
 }

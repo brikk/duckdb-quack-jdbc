@@ -134,10 +134,18 @@ public final class BinaryReader {
     }
 
     public <T> T readRequiredField(int fieldId, Supplier<T> reader) {
+        return readRequiredField(fieldId, Integer.toString(fieldId), reader);
+    }
+
+    public <T> T readRequiredField(WireField field, Supplier<T> reader) {
+        return readRequiredField(field.id(), field.describe(), reader);
+    }
+
+    private <T> T readRequiredField(int fieldId, String fieldName, Supplier<T> reader) {
         int actual = readFieldId();
         if (actual != fieldId) {
             throw new QuackProtocolException(
-                    "Expected field " + fieldId + " at offset " + (offset - 2) + ", got " + actual);
+                    "Expected field " + fieldName + " at offset " + (offset - 2) + ", got " + actual);
         }
         return reader.get();
     }
@@ -148,6 +156,14 @@ public final class BinaryReader {
         }
         readFieldId();
         return reader.get();
+    }
+
+    public <T> T readOptionalField(WireField field, Supplier<T> reader, T defaultValue) {
+        return readOptionalField(field.id(), reader, defaultValue);
+    }
+
+    public boolean nextFieldIs(WireField field) {
+        return !eof() && peekFieldId() == field.id();
     }
 
     public int readByte() {

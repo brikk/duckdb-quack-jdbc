@@ -181,10 +181,7 @@ public final class QuackResultSet extends SkeletalResultSet {
     @Override public boolean getBoolean(int columnIndex) throws SQLException {
         Object v = rawValue(columnIndex);
         if (v == null) return false;
-        if (v instanceof Boolean b) return b;
-        if (v instanceof Number n) return n.longValue() != 0L;
-        if (v instanceof String s) return "true".equalsIgnoreCase(s) || "1".equals(s) || "t".equalsIgnoreCase(s);
-        return false;
+        return toBoolean(v);
     }
     @Override public boolean getBoolean(String columnLabel) throws SQLException { return getBoolean(findColumn(columnLabel)); }
 
@@ -239,7 +236,8 @@ public final class QuackResultSet extends SkeletalResultSet {
             return BigDecimal.valueOf(((Number) v).longValue());
         }
         if (v instanceof Number n) return BigDecimal.valueOf(n.doubleValue());
-        return new BigDecimal(v.toString());
+        Number n = toNumber(v);
+        return n instanceof BigDecimal bd ? bd : BigDecimal.valueOf(n.longValue());
     }
     @Override public BigDecimal getBigDecimal(String columnLabel) throws SQLException { return getBigDecimal(findColumn(columnLabel)); }
 
@@ -254,10 +252,8 @@ public final class QuackResultSet extends SkeletalResultSet {
     @Override public Date getDate(int columnIndex) throws SQLException {
         Object v = rawValue(columnIndex);
         if (v == null) return null;
-        if (v instanceof LocalDate ld) return Date.valueOf(ld);
-        if (v instanceof LocalDateTime ldt) return Date.valueOf(ldt.toLocalDate());
         if (v instanceof OffsetDateTime odt) return Date.valueOf(odt.toLocalDate());
-        return Date.valueOf(v.toString());
+        return Date.valueOf(toLocalDate(v));
     }
     @Override public Date getDate(String columnLabel) throws SQLException { return getDate(findColumn(columnLabel)); }
 
@@ -265,14 +261,9 @@ public final class QuackResultSet extends SkeletalResultSet {
         if (cal == null) return getDate(columnIndex);
         Object v = rawValue(columnIndex);
         if (v == null) return null;
-        LocalDate date;
-        if (v instanceof LocalDate ld) date = ld;
-        else if (v instanceof LocalDateTime ldt) date = ldt.toLocalDate();
-        else if (v instanceof OffsetDateTime odt) date = CalendarConversion.toLocalDateTime(odt.toInstant(), cal).toLocalDate();
-        else {
-            try { date = LocalDate.parse(v.toString(), JDBC_DATE); }
-            catch (DateTimeException e) { throw new SQLException("Cannot convert value to Date", e); }
-        }
+        LocalDate date = v instanceof OffsetDateTime odt
+                ? CalendarConversion.toLocalDateTime(odt.toInstant(), cal).toLocalDate()
+                : toLocalDate(v);
         return new Date(CalendarConversion.toInstant(date.atStartOfDay(), cal).toEpochMilli());
     }
     @Override public Date getDate(String columnLabel, Calendar cal) throws SQLException { return getDate(findColumn(columnLabel), cal); }
@@ -280,9 +271,7 @@ public final class QuackResultSet extends SkeletalResultSet {
     @Override public Time getTime(int columnIndex) throws SQLException {
         Object v = rawValue(columnIndex);
         if (v == null) return null;
-        if (v instanceof LocalTime lt) return Time.valueOf(lt);
-        if (v instanceof LocalDateTime ldt) return Time.valueOf(ldt.toLocalTime());
-        return Time.valueOf(v.toString());
+        return Time.valueOf(toLocalTime(v));
     }
     @Override public Time getTime(String columnLabel) throws SQLException { return getTime(findColumn(columnLabel)); }
 
@@ -290,13 +279,7 @@ public final class QuackResultSet extends SkeletalResultSet {
         if (cal == null) return getTime(columnIndex);
         Object v = rawValue(columnIndex);
         if (v == null) return null;
-        LocalTime time;
-        if (v instanceof LocalTime lt) time = lt;
-        else if (v instanceof LocalDateTime ldt) time = ldt.toLocalTime();
-        else {
-            try { time = LocalTime.parse(v.toString(), JDBC_TIME); }
-            catch (DateTimeException e) { throw new SQLException("Cannot convert value to Time", e); }
-        }
+        LocalTime time = toLocalTime(v);
         return new Time(CalendarConversion.toInstant(time.atDate(LocalDate.ofEpochDay(0)), cal).toEpochMilli());
     }
     @Override public Time getTime(String columnLabel, Calendar cal) throws SQLException { return getTime(findColumn(columnLabel), cal); }
@@ -304,10 +287,8 @@ public final class QuackResultSet extends SkeletalResultSet {
     @Override public Timestamp getTimestamp(int columnIndex) throws SQLException {
         Object v = rawValue(columnIndex);
         if (v == null) return null;
-        if (v instanceof LocalDateTime ldt) return Timestamp.valueOf(ldt);
         if (v instanceof OffsetDateTime odt) return Timestamp.from(odt.toInstant());
-        if (v instanceof LocalDate ld) return Timestamp.valueOf(ld.atStartOfDay());
-        return Timestamp.valueOf(v.toString());
+        return Timestamp.valueOf(toLocalDateTime(v));
     }
     @Override public Timestamp getTimestamp(String columnLabel) throws SQLException { return getTimestamp(findColumn(columnLabel)); }
 
@@ -316,14 +297,7 @@ public final class QuackResultSet extends SkeletalResultSet {
         Object v = rawValue(columnIndex);
         if (v == null) return null;
         if (v instanceof OffsetDateTime odt) return Timestamp.from(odt.toInstant());
-        LocalDateTime timestamp;
-        if (v instanceof LocalDateTime ldt) timestamp = ldt;
-        else if (v instanceof LocalDate ld) timestamp = ld.atStartOfDay();
-        else {
-            try { timestamp = LocalDateTime.parse(v.toString().trim(), JDBC_TIMESTAMP); }
-            catch (DateTimeException e) { throw new SQLException("Cannot convert value to Timestamp", e); }
-        }
-        return Timestamp.from(CalendarConversion.toInstant(timestamp, cal));
+        return Timestamp.from(CalendarConversion.toInstant(toLocalDateTime(v), cal));
     }
     @Override public Timestamp getTimestamp(String columnLabel, Calendar cal) throws SQLException { return getTimestamp(findColumn(columnLabel), cal); }
 
@@ -399,7 +373,7 @@ public final class QuackResultSet extends SkeletalResultSet {
         if (v == null) return null;
         if (type.isInstance(v)) return type.cast(v);
         if (type == String.class) return (T) v.toString();
-        if (type == Boolean.class) return (T) Boolean.valueOf(getBooleanFromValue(v));
+        if (type == Boolean.class) return (T) Boolean.valueOf(toBoolean(v));
         if (type == Integer.class) return (T) Integer.valueOf(((Number) toNumber(v)).intValue());
         if (type == Long.class) return (T) Long.valueOf(((Number) toNumber(v)).longValue());
         if (type == Double.class) return (T) Double.valueOf(((Number) toNumber(v)).doubleValue());
@@ -462,11 +436,45 @@ public final class QuackResultSet extends SkeletalResultSet {
         throw new SQLException("Cannot convert " + v.getClass().getSimpleName() + " to a number");
     }
 
-    private boolean getBooleanFromValue(Object v) {
+    private static boolean toBoolean(Object v) throws SQLException {
         if (v instanceof Boolean b) return b;
         if (v instanceof Number n) return n.longValue() != 0L;
-        if (v instanceof String s) return "true".equalsIgnoreCase(s) || "1".equals(s);
-        return false;
+        if (v instanceof String s) {
+            if ("true".equalsIgnoreCase(s) || "t".equalsIgnoreCase(s) || "1".equals(s)) return true;
+            if ("false".equalsIgnoreCase(s) || "f".equalsIgnoreCase(s) || "0".equals(s)) return false;
+            throw new SQLException("Cannot convert " + s + " to a boolean");
+        }
+        throw new SQLException("Cannot convert " + v.getClass().getSimpleName() + " to a boolean");
+    }
+
+    private static LocalDate toLocalDate(Object v) throws SQLException {
+        if (v instanceof LocalDate ld) return ld;
+        if (v instanceof LocalDateTime ldt) return ldt.toLocalDate();
+        if (v instanceof String s) {
+            try { return LocalDate.parse(s.trim(), JDBC_DATE); }
+            catch (DateTimeException e) { throw new SQLException("Cannot convert " + s + " to Date", e); }
+        }
+        throw new SQLException("Cannot convert " + v.getClass().getSimpleName() + " to Date");
+    }
+
+    private static LocalTime toLocalTime(Object v) throws SQLException {
+        if (v instanceof LocalTime lt) return lt;
+        if (v instanceof LocalDateTime ldt) return ldt.toLocalTime();
+        if (v instanceof String s) {
+            try { return LocalTime.parse(s.trim(), JDBC_TIME); }
+            catch (DateTimeException e) { throw new SQLException("Cannot convert " + s + " to Time", e); }
+        }
+        throw new SQLException("Cannot convert " + v.getClass().getSimpleName() + " to Time");
+    }
+
+    private static LocalDateTime toLocalDateTime(Object v) throws SQLException {
+        if (v instanceof LocalDateTime ldt) return ldt;
+        if (v instanceof LocalDate ld) return ld.atStartOfDay();
+        if (v instanceof String s) {
+            try { return LocalDateTime.parse(s.trim(), JDBC_TIMESTAMP); }
+            catch (DateTimeException e) { throw new SQLException("Cannot convert " + s + " to Timestamp", e); }
+        }
+        throw new SQLException("Cannot convert " + v.getClass().getSimpleName() + " to Timestamp");
     }
 
     private void checkOpen() throws SQLException {

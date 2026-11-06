@@ -88,6 +88,29 @@ class BinarySerializerTest {
         });
     }
 
+    private enum Sample implements WireField {
+        FIRST(1), SECOND(2);
+
+        private final int id;
+        Sample(int id) { this.id = id; }
+        @Override public int id() { return id; }
+    }
+
+    @Test
+    void wireFieldsWriteTheirIdAndNameMismatchesInErrors() {
+        BinaryWriter w = new BinaryWriter();
+        w.writeObject(obj -> obj.writeField(Sample.SECOND, () -> obj.writeUleb(9)));
+        byte[] bytes = w.toByteArray();
+        assertEquals(2, bytes[0]);
+
+        BinaryReader r = new BinaryReader(bytes);
+        assertTrue(r.nextFieldIs(Sample.SECOND));
+        assertEquals("fallback", r.readOptionalField(Sample.FIRST, r::readUlebInt, "fallback"));
+        var error = assertThrows(com.gizmodata.quack.jdbc.QuackProtocolException.class,
+                () -> r.readRequiredField(Sample.FIRST, r::readUlebInt));
+        assertTrue(error.getMessage().contains("FIRST(1)"), error.getMessage());
+    }
+
     @Test
     void hugeIntRoundTrip() {
         for (BigInteger value : new BigInteger[]{BigInteger.ZERO, BigInteger.ONE, BigInteger.valueOf(-1),
