@@ -671,6 +671,18 @@ lazy dictionaries and chunk-at-a-time decoding remain separate work. See the
 release verification and publication details, and the
 [topic checklist](BIG_RESULTS_TODO.md) for remaining work.
 
+## Named wire fields and strict conversions in 0.14.0 (2026-11-06)
+
+Version **0.14.0** names every wire field id (`WireField` enums per serialized
+object) without changing a byte on the wire, and makes `ResultSet` getters throw
+`SQLException` for unconvertible values instead of coercing or leaking unchecked
+exceptions. `QuackSession.connect(uri, factory)` is removed. Server pins, v1/v3
+wire formats, timeouts, decode budgets and Java 17 bytecode are unchanged.
+
+The full matched-oracle matrix passes on Java 17 and 21 against signed DuckDB
+1.5.6/v1 and released 2.0.0/v3 (Quack `f96420ed46`): 787 tests per combination.
+See [the release report](RELEASE_0.14.0.md).
+
 ## Closed-channel no-replay patch in 0.13.1 (2026-11-06)
 
 Version **0.13.1** stops address fallback after ClosedChannelException: a POST may

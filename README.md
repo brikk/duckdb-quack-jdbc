@@ -20,7 +20,7 @@ familiar `jdbc:quack://` URL.
 | 1.5.5 and released 1.5.6 | v1 | Full integration tests against signed core Quack; 1.5.6 also tested with native `duckdb_jdbc` 1.5.6.0 as an oracle. |
 | 2.0.0-alpha45672 | v3 | Full integration tests against signed core Quack `974927a394`; **prerelease only**. |
 | 2.0.0-alpha48630 | v3 | Full default suite passed against signed core Quack `e7a9be3f8c`. |
-| Released 2.0.0 | v3 | Full version-matched oracle suite passes against signed core Quack `f96420ed46`; see [0.13.1 verification](dev-docs/RELEASE_0.13.1.md). |
+| Released 2.0.0 | v3 | Full version-matched oracle suite passes against signed core Quack `f96420ed46`; see [0.14.0 verification](dev-docs/RELEASE_0.14.0.md). |
 
 The v1 path remains backwards-compatible with DuckDB 1.5.x's Quack protocol;
 other 1.5.x patch releases have not all been separately certified. Version
@@ -46,7 +46,7 @@ and released 2.0.0's [`f96420ed`](https://github.com/duckdb/duckdb/blob/v2.0.0/.
 v3 batches are byte-sized and may contain more rows than the PREPARE inline-row
 hint; the driver inlines a first batch to retain JDBC DML/error behavior.
 The signed DuckDB 2.0.0 extension and native JDBC 2.0.0.0 oracle are covered
-by the 0.13.1 verification suite.
+by the 0.14.0 verification suite.
 
 ## Quickstart
 
