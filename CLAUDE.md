@@ -55,6 +55,18 @@ mvn -Poracle -Dquack.it.required=true verify  # required CI profile
 Integration tests spawn a real DuckDB CLI as a Quack server. They auto-skip
 when `duckdb` isn't on PATH; override with `QUACK_IT_DUCKDB=/path/to/duckdb`.
 
+The v3 oracle suite needs released DuckDB 2.0.0, which mise cannot install as a
+binary. `scripts/fetch-duckdb-2.sh` downloads and SHA256-checks the CLI and
+prints its path:
+
+```bash
+QUACK_IT_DUCKDB=$(scripts/fetch-duckdb-2.sh) mvn -Poracle -Dduckdb.jdbc.version=2.0.0.0 verify
+QUACK_IT_EXPECTED_VERSION=v2.0.0 QUACK_IT_EXPECTED_QUACK=f96420ed46 python3 scripts/check-integration-reports.py
+```
+
+The second line is what CI runs after Maven: it pins every fixture log to the
+expected server version and signed Quack revision.
+
 ## Quack extension version
 
 As of DuckDB v1.5.3 ("Variegata"), `quack` ships as a **core** signed
