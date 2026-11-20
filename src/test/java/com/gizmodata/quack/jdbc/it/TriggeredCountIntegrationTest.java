@@ -218,7 +218,7 @@ public class TriggeredCountIntegrationTest {
             }
             Path extensions = Files.createTempDirectory(Path.of("target"), "native-quack-counts-").toAbsolutePath();
             try (var nativeConnection = DuckDbOracle.newConnection(); var nativeStatement = nativeConnection.createStatement()) {
-                nativeStatement.execute("SET extension_directory='" + extensions.toString().replace("'", "''") + "'");
+                nativeStatement.execute("SET extension_directories=['" + extensions.toString().replace("'", "''") + "']");
                 nativeStatement.execute("INSTALL httpfs FROM core; LOAD httpfs; INSTALL quack FROM core; LOAD quack");
                 try (var identity = nativeStatement.executeQuery("SELECT extension_version,installed_from "
                         + "FROM duckdb_extensions() WHERE extension_name='quack'")) {

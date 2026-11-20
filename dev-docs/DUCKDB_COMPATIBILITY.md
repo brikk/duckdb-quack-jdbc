@@ -671,6 +671,22 @@ lazy dictionaries and chunk-at-a-time decoding remain separate work. See the
 release verification and publication details, and the
 [topic checklist](BIG_RESULTS_TODO.md) for remaining work.
 
+## Upstream check (2026-11-20)
+
+No new DuckDB release: 2.0.0 (2026-10-21) remains latest. The signed core Quack
+served by `INSTALL quack FROM core` is unchanged: `f96420ed46` on 2.0.0 and
+`7e80f7f` on 1.5.6, matching the CI pins. The `duckdb/duckdb-quack` `main`
+branch is 20 commits ahead of `f96420ed46`, none of them wire-affecting:
+per-request server logging with the caller's address (#360), rejection of
+`READ_ONLY` and unknown `ATTACH` options on the DuckDB-as-client side, no
+heartbeat thread on single-threaded wasm, and DuckDB API adaptations. No driver
+change is needed; the matrix was rerun as confirmation.
+
+DuckDB 2.0 deprecates `SET extension_directory` in favor of
+`extension_directories` (a list); the integration fixture and the native oracle
+in `TriggeredCountIntegrationTest` now use the list form, which 1.5.6 also
+accepts, so fixture logs no longer carry the deprecation warning.
+
 ## Named wire fields and strict conversions in 0.14.0 (2026-11-06)
 
 Version **0.14.0** names every wire field id (`WireField` enums per serialized

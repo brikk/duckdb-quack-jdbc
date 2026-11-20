@@ -96,7 +96,7 @@ public final class QuackServerFixture implements AutoCloseable {
         QuackServerFixture fixture = new QuackServerFixture(process, port, writer, log, extensions);
 
         try {
-            writer.write("SET extension_directory='" + extensions.toString().replace("'", "''") + "';\n");
+            writer.write("SET extension_directories=['" + extensions.toString().replace("'", "''") + "'];\n");
             writer.write("SET autoinstall_known_extensions=false;\nSET autoload_known_extensions=false;\n");
             // httpfs supplies the crypto provider needed by Quack's session-ID RNG.
             writer.write("INSTALL httpfs FROM core;\nLOAD httpfs;\n");
