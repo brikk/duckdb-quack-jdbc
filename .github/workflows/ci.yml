@@ -60,7 +60,7 @@ jobs:
             target/quack-fixture-logs/**/*.log
 
   test-v2:
-    name: Build & test (DuckDB 2.0.0)
+    name: Build & test (DuckDB 2.0.1)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -72,25 +72,25 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
-      - name: Install DuckDB 2.0.0 CLI
+      - name: Install DuckDB 2.0.1 CLI
         run: |
           set -euo pipefail
-          curl -fsSL 'https://github.com/duckdb/duckdb/releases/download/v2.0.0/duckdb-cli-linux-amd64.tar.gz' -o "$RUNNER_TEMP/duckdb-cli.tar.gz"
+          curl -fsSL 'https://github.com/duckdb/duckdb/releases/download/v2.0.1/duckdb-cli-linux-amd64.tar.gz' -o "$RUNNER_TEMP/duckdb-cli.tar.gz"
           tar -xzf "$RUNNER_TEMP/duckdb-cli.tar.gz" -C "$RUNNER_TEMP"
           CLI="$RUNNER_TEMP/duckdb"
           test -x "$CLI"
-          "$CLI" --version | grep -E '^v2\.0\.0[[:space:]]'
+          DUCKDB_AGENT_MODE=0 "$CLI" --version | grep -E '^v2\.0\.1[[:space:]]'
           echo "QUACK_IT_DUCKDB=$CLI" >> "$GITHUB_ENV"
 
-      - name: Build and run 2.0 oracle tests
+      - name: Build and run 2.0.1 oracle tests
         id: tests
-        run: mvn --batch-mode --no-transfer-progress -Poracle -Dduckdb.jdbc.version=2.0.0.0 verify
+        run: mvn --batch-mode --no-transfer-progress -Poracle -Dduckdb.jdbc.version=2.0.1.0 verify
 
-      - name: Require signed 2.0.0 integration reports
+      - name: Require signed 2.0.1 integration reports
         if: ${{ always() && steps.tests.outcome != 'skipped' }}
         env:
-          QUACK_IT_EXPECTED_VERSION: v2.0.0
-          QUACK_IT_EXPECTED_QUACK: f96420ed46
+          QUACK_IT_EXPECTED_VERSION: v2.0.1
+          QUACK_IT_EXPECTED_QUACK: 3bc63c01f8
         run: python3 scripts/check-integration-reports.py
 
       - name: Upload test reports on failure

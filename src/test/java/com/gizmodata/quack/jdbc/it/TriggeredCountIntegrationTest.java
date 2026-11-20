@@ -223,7 +223,7 @@ public class TriggeredCountIntegrationTest {
                 try (var identity = nativeStatement.executeQuery("SELECT extension_version,installed_from "
                         + "FROM duckdb_extensions() WHERE extension_name='quack'")) {
                     assertTrue(identity.next());
-                    assertTrue(identity.getString(1).startsWith("f96420ed46"));
+                    assertEquals(server.quackVersion(), identity.getString(1));
                     assertEquals("core", identity.getString(2));
                 }
                 String query = "SELECT * FROM quack_query('quack:127.0.0.1:" + server.port()

@@ -55,13 +55,13 @@ mvn -Poracle -Dquack.it.required=true verify  # required CI profile
 Integration tests spawn a real DuckDB CLI as a Quack server. They auto-skip
 when `duckdb` isn't on PATH; override with `QUACK_IT_DUCKDB=/path/to/duckdb`.
 
-The v3 oracle suite needs released DuckDB 2.0.0, which mise cannot install as a
+The v3 oracle suite needs released DuckDB 2.0.1, which mise cannot install as a
 binary. `scripts/fetch-duckdb-2.sh` downloads and SHA256-checks the CLI and
 prints its path:
 
 ```bash
-QUACK_IT_DUCKDB=$(scripts/fetch-duckdb-2.sh) mvn -Poracle -Dduckdb.jdbc.version=2.0.0.0 verify
-QUACK_IT_EXPECTED_VERSION=v2.0.0 QUACK_IT_EXPECTED_QUACK=f96420ed46 python3 scripts/check-integration-reports.py
+QUACK_IT_DUCKDB=$(scripts/fetch-duckdb-2.sh) mvn -Poracle -Dduckdb.jdbc.version=2.0.1.0 verify
+QUACK_IT_EXPECTED_VERSION=v2.0.1 QUACK_IT_EXPECTED_QUACK=3bc63c01f8 python3 scripts/check-integration-reports.py
 ```
 
 The second line is what CI runs after Maven: it pins every fixture log to the
@@ -78,7 +78,7 @@ dependency are pinned to released DuckDB 1.5.6.
 
 The v1 wire format was clean-room ported from `@quack-protocol/sdk`; v3 support
 tracks DuckDB's pinned Quack schema. The full driver suite passes against
-DuckDB 1.5.6's signed core Quack v1 and released DuckDB 2.0.0's signed
+DuckDB 1.5.6's signed core Quack v1 and released DuckDB 2.0.1's signed
 core Quack v3. For exact revisions and test results, see
 [release compatibility](dev-docs/DUCKDB_COMPATIBILITY.md).
 The original review and historical verification are in

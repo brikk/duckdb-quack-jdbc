@@ -39,6 +39,7 @@ public final class QuackServerFixture implements AutoCloseable {
     private final BufferedWriter stdin;
     private final Path logFile;
     private final Path extensionDirectory;
+    private volatile String quackVersion;
 
     private QuackServerFixture(Process process, int port, BufferedWriter stdin,
                                Path logFile, Path extensionDirectory) {
@@ -143,6 +144,7 @@ public final class QuackServerFixture implements AutoCloseable {
                 Files.writeString(logFile, "JDBC identity=" + identity + "\n", StandardOpenOption.APPEND);
                 System.out.println("Quack fixture JDBC identity: " + identity);
                 validateIdentity(identity, extensionDirectory, required);
+                if ("quack".equals(identity.name())) quackVersion = identity.version();
                 String canonicalPath = "Canonical install path=" + Path.of(identity.installPath()).toRealPath();
                 Files.writeString(logFile, canonicalPath + "\n", StandardOpenOption.APPEND);
                 Files.writeString(logFile, identity.name() + " SHA256=" + sha256(Path.of(identity.installPath()))
@@ -210,6 +212,11 @@ public final class QuackServerFixture implements AutoCloseable {
 
     public String jdbcUrl() {
         return "jdbc:quack://127.0.0.1:" + port + "?token=" + DEFAULT_TOKEN;
+    }
+
+    /** The signed core Quack revision the server loaded, as reported by duckdb_extensions(). */
+    public String quackVersion() {
+        return quackVersion;
     }
 
     public int port() {

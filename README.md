@@ -13,7 +13,7 @@ familiar `jdbc:quack://` URL.
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > **Status:** Experimental / alpha. Version `0.14.0` supports both Quack v1
-> for DuckDB 1.5.x and Quack v3 for released DuckDB 2.0.0.
+> for DuckDB 1.5.x and Quack v3 for released DuckDB 2.0.x.
 
 | DuckDB server | Quack protocol | Verification |
 | --- | --- | --- |
@@ -21,6 +21,7 @@ familiar `jdbc:quack://` URL.
 | 2.0.0-alpha45672 | v3 | Full integration tests against signed core Quack `974927a394`; **prerelease only**. |
 | 2.0.0-alpha48630 | v3 | Full default suite passed against signed core Quack `e7a9be3f8c`. |
 | Released 2.0.0 | v3 | Full version-matched oracle suite passes against signed core Quack `f96420ed46`; see [0.14.0 verification](dev-docs/RELEASE_0.14.0.md). |
+| Released 2.0.1 | v3 | Full version-matched oracle suite passes against signed core Quack `3bc63c01f8`; CI pins this server. See [the 2.0.1 compatibility entry](dev-docs/DUCKDB_COMPATIBILITY.md). |
 
 The v1 path remains backwards-compatible with DuckDB 1.5.x's Quack protocol;
 other 1.5.x patch releases have not all been separately certified. Version
@@ -42,11 +43,12 @@ SQL with a mismatched message layout. The v3 implementation was verified with
 DuckDB's pinned `duckdb-quack` revisions
 [`974927a`](https://github.com/duckdb/duckdb/blob/f2f9329721/.github/config/extensions/quack.cmake),
 [`e7a9be3`](https://github.com/duckdb/duckdb/blob/f2ba7850dd/.github/config/extensions/quack.cmake),
-and released 2.0.0's [`f96420ed`](https://github.com/duckdb/duckdb/blob/v2.0.0/.github/config/extensions/quack.cmake).
+released 2.0.0's [`f96420ed`](https://github.com/duckdb/duckdb/blob/v2.0.0/.github/config/extensions/quack.cmake),
+and released 2.0.1's [`3bc63c01`](https://github.com/duckdb/duckdb/blob/v2.0.1/.github/config/extensions/quack.cmake).
 v3 batches are byte-sized and may contain more rows than the PREPARE inline-row
 hint; the driver inlines a first batch to retain JDBC DML/error behavior.
-The signed DuckDB 2.0.0 extension and native JDBC 2.0.0.0 oracle are covered
-by the 0.14.0 verification suite.
+The signed DuckDB 2.0.1 extension and native JDBC 2.0.1.0 oracle are covered
+by CI; 2.0.0 was covered by the 0.14.0 verification suite.
 
 ## Quickstart
 

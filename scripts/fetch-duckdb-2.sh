@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Fetch the released DuckDB 2.0.0 CLI used by the v3 oracle suite and verify
-# its SHA256 against the binary recorded in dev-docs/RELEASE_0.13.1.md.
+# Fetch the released DuckDB 2.0.x CLI used by the v3 oracle suite and verify
+# its SHA256 against the official release archive.
 #
-#   scripts/fetch-duckdb-2.sh [dest-dir]      default: /tmp/opencode/duckdb-2.0.0
+#   scripts/fetch-duckdb-2.sh [dest-dir]      default: /tmp/opencode/duckdb-2.0.1
 #
 # Prints the CLI path on success. Run the suite with:
-#   QUACK_IT_DUCKDB=$(scripts/fetch-duckdb-2.sh) mvn -Poracle -Dduckdb.jdbc.version=2.0.0.0 verify
-#   QUACK_IT_EXPECTED_VERSION=v2.0.0 QUACK_IT_EXPECTED_QUACK=f96420ed46 python3 scripts/check-integration-reports.py
+#   QUACK_IT_DUCKDB=$(scripts/fetch-duckdb-2.sh) mvn -Poracle -Dduckdb.jdbc.version=2.0.1.0 verify
+#   QUACK_IT_EXPECTED_VERSION=v2.0.1 QUACK_IT_EXPECTED_QUACK=3bc63c01f8 python3 scripts/check-integration-reports.py
 set -euo pipefail
 
-VERSION=2.0.0
-EXPECTED_SHA256=c41f957db5645d545a9caef430994cf262d24fad9297fef70c691395aadb43fb
+VERSION=2.0.1
+EXPECTED_SHA256=47d96c334a04beb3b6b9d6571eb49b97af9f6ab2d4f96d4d8eb9a3f406962117
 URL="https://github.com/duckdb/duckdb/releases/download/v${VERSION}/duckdb-cli-linux-amd64.tar.gz"
 DEST="${1:-/tmp/opencode/duckdb-${VERSION}}"
 CLI="${DEST}/duckdb"

@@ -671,7 +671,40 @@ lazy dictionaries and chunk-at-a-time decoding remain separate work. See the
 release verification and publication details, and the
 [topic checklist](BIG_RESULTS_TODO.md) for remaining work.
 
-## Upstream check (2026-11-20)
+## DuckDB 2.0.1 (2026-11-20)
+
+DuckDB **2.0.1** (`8d78114e90`) was released on 2026-11-20 and pins
+`duckdb-quack` at `3bc63c01f80a13d57ca02a721dd13908c1d934c1`
+([duckdb/duckdb#28964](https://github.com/duckdb/duckdb/pull/28964)); the
+signed core extension reports `3bc63c01f8`, httpfs `f71cfdb4bf`. Relative to
+2.0.0's `f96420ed46` the Quack delta is 19 commits: per-request server logging
+with the caller's address, rejection of `READ_ONLY` and unknown `ATTACH`
+options on the DuckDB-as-client path, no heartbeat thread on single-threaded
+wasm, `QuackCatalog::SupportsNestedSchemas()` declared true (the upstreamed
+DuckDB patch), and DuckDB API adaptations. No `MessageType`, field id,
+serialization, handshake, heartbeat or FETCH change: **no driver change**.
+
+The v3 CI job, `scripts/fetch-duckdb-2.sh` and the native JDBC oracle move to
+2.0.1 (`QUACK_IT_EXPECTED_VERSION=v2.0.1`, `QUACK_IT_EXPECTED_QUACK=3bc63c01f8`,
+`duckdb.jdbc.version=2.0.1.0`, CLI SHA256 `47d96c33…2117`).
+`TriggeredCountIntegrationTest` no longer hardcodes the Quack revision; it
+asserts that the native client loaded the same signed revision the server
+fixture reports, so a future pin bump cannot silently break it.
+
+| Java | Signed server / matched native JDBC oracle | Tests | Failures | Errors | Skips |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 17.0.2 | DuckDB 1.5.6 (`069cc9f9b5`, Quack `7e80f7f`) / JDBC 1.5.6.0 | 787 | 0 | 0 | 3 |
+| 17.0.2 | DuckDB 2.0.1 (`8d78114e90`, Quack `3bc63c01f8`) / JDBC 2.0.1.0 | 787 | 0 | 0 | 3 |
+| 21.0.2 | DuckDB 1.5.6 (`069cc9f9b5`, Quack `7e80f7f`) / JDBC 1.5.6.0 | 787 | 0 | 0 | 3 |
+| 21.0.2 | DuckDB 2.0.1 (`8d78114e90`, Quack `3bc63c01f8`) / JDBC 2.0.1.0 | 787 | 0 | 0 | 3 |
+| 17.0.2 | DuckDB 2.0.0 (`d54cbbe3df`, Quack `f96420ed46`) / JDBC 2.0.0.0 | 787 | 0 | 0 | 3 |
+
+Every run reports 17/17 required integration classes; the three skips are the
+optional preview pair and the two IPv6/multi-address tests. The 2.0.0 row shows
+the released 0.14.0 driver and fixture changes still pass against the previous
+server.
+
+## Upstream check (2026-11-20, before the 2.0.1 release)
 
 No new DuckDB release: 2.0.0 (2026-10-21) remains latest. The signed core Quack
 served by `INSTALL quack FROM core` is unchanged: `f96420ed46` on 2.0.0 and
