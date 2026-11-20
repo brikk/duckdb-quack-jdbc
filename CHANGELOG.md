@@ -6,6 +6,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.1] — 2026-11-20
+
+Verification-only release: no production class changes from 0.14.0.
+
+### Compatibility
+
+- Certified against released DuckDB **2.0.1** (`8d78114e90`) and its signed core
+  Quack `3bc63c01f8`, with native JDBC 2.0.1.0 as the oracle. 2.0.1's Quack
+  delta over 2.0.0 (`f96420ed46`) is server-side request logging, rejection of
+  `READ_ONLY`/unknown `ATTACH` options on the DuckDB-as-client path, no heartbeat
+  thread on single-threaded wasm, and the nested-schema capability flag; nothing
+  on the wire changed. DuckDB 1.5.6/v1 and 2.0.0/v3 remain verified.
+
+### Testing
+
+- The v3 CI job, `scripts/fetch-duckdb-2.sh` and the native oracle track 2.0.1.
+  `TriggeredCountIntegrationTest` compares the native client's Quack revision to
+  the server fixture's rather than a hardcoded string.
+- Fixtures use `extension_directories` (2.0 deprecates `extension_directory`)
+  and start the CLI with `DUCKDB_AGENT_MODE=0`.
+- Java 17/21 x DuckDB 1.5.6/2.0.1 plus a 2.0.0 regression run: 787 tests each,
+  zero failures/errors, 17/17 required integration classes. See
+  [the compatibility entry](dev-docs/DUCKDB_COMPATIBILITY.md).
+
 ## [0.14.0] — 2026-11-06
 
 ### Changed
